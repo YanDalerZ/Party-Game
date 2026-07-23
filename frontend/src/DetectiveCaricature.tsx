@@ -1,186 +1,325 @@
 import React, { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
-import VideoCall from "./VideoCall";
-import { type Room } from "./App";
-
-interface Props {
+export interface Player {
+    id: string;
+    name: string;
+}
+export interface Room {
+    code: string;
+    players: Player[];
+    currentGame: string | null;
+    gameData: any;
+    scores: Record<string, number>;
+    globalScores: Record<string, number>;
+}
+interface DetectiveCaricatureProps {
     room: Room;
     myId: string;
 }
 
-export default function DetectiveCaricature({ room, myId }: Props) {
-    const [gameState, setGameState] = useState<any>(null);
-    const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const isDrawingRef = useRef(false);
+export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCaricatureProps) {
+    const [gameState, setGameState] = useState<any>(room.gameData || {});
 
-    const opponent = room.players.find((p) => p.id !== myId);
-    const opponentName = opponent ? opponent.name : "Opponent";
+    // Drawing state
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [brushColor, setBrushColor] = useState("#000000");
+    const [brushSize, setBrushSize] = useState(5);
+    const [isEraser, setIsEraser] = useState(false);
+
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const contextRef = useRef<CanvasRenderingContext2D | null>(null);
+
+    const COLORS = [
+        { name: "Black", hex: "#000000" },
+        { name: "Red", hex: "#ef4444" },
+        { name: "Blue", hex: "#3b82f6" },
+        { name: "Green", hex: "#22c55e" },
+        { name: "Yellow", hex: "#eab308" },
+        { name: "Brown", hex: "#92400e" },
+    ];
 
     useEffect(() => {
-        const handleDetectiveUpdated = (data: any) => setGameState(data);
-        socket.on("detective_updated", handleDetectiveUpdated);
+        // Setup canvas
+        const canvas = canvasRef.current;
+        if (canvas) {
+            // Set actual resolution
+            canvas.width = 500;
+            canvas.height = 500;
 
-        // Fetch current state on component mount
+            const context = canvas.getContext("2d");
+            if (context) {
+                context.lineCap = "round";
+                context.lineJoin = "round";
+                // Fill white background initially
+                context.fillStyle = "#ffffff";
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                contextRef.current = context;
+            }
+        }
+    }, [gameState.myRole]); // Re-run if role changes
+
+    // Update context when brush settings change
+    useEffect(() => {
+        if (contextRef.current) {
+            contextRef.current.strokeStyle = isEraser ? "#ffffff" : brushColor;
+            contextRef.current.lineWidth = brushSize;
+        }
+    }, [brushColor, brushSize, isEraser]);
+
+    useEffect(() => {
         socket.emit("get_detective_state", room.code);
 
+        const handleUpdate = (data: any) => {
+            setGameState(data);
+
+            // If I am the describer, update my view of the canvas
+            if (data.myRole === "describer" && data.finalCanvas && canvasRef.current) {
+                const img = new Image();
+                img.onload = () => {
+                    const ctx = canvasRef.current?.getContext("2d");
+                    if (ctx) {
+                        ctx.clearRect(0, 0, 500, 500);
+                        ctx.drawImage(img, 0, 0);
+                    }
+                };
+                img.src = data.finalCanvas;
+            }
+        };
+
+        socket.on("detective_updated", handleUpdate);
+
         return () => {
-            socket.off("detective_updated", handleDetectiveUpdated);
+            socket.off("detective_updated", handleUpdate);
         };
     }, [room.code]);
 
-    const handleEndGameWithScore = (success: boolean) => {
-        socket.emit("detective_end", { roomCode: room.code, success });
-    };
+    const startDrawing = ({ nativeEvent }: React.MouseEvent | React.TouchEvent) => {
+        if (gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
 
-    const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-        if (!canvasRef.current) return { x: 0, y: 0 };
-        const rect = canvasRef.current.getBoundingClientRect();
-
-        let clientX = 0;
-        let clientY = 0;
-
-        if ("touches" in e) {
-            clientX = e.touches[0].clientX;
-            clientY = e.touches[0].clientY;
+        let offsetX, offsetY;
+        if ("touches" in nativeEvent) {
+            const rect = canvasRef.current?.getBoundingClientRect();
+            offsetX = nativeEvent.touches[0].clientX - (rect?.left || 0);
+            offsetY = nativeEvent.touches[0].clientY - (rect?.top || 0);
         } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
+            offsetX = (nativeEvent as MouseEvent).offsetX;
+            offsetY = (nativeEvent as MouseEvent).offsetY;
         }
 
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top,
-        };
+        contextRef.current?.beginPath();
+        contextRef.current?.moveTo(offsetX, offsetY);
+        setIsDrawing(true);
     };
 
-    const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-        if (!gameState || gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
-        isDrawingRef.current = true;
+    const draw = ({ nativeEvent }: React.MouseEvent | React.TouchEvent) => {
+        if (!isDrawing || gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
 
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+        nativeEvent.preventDefault(); // Prevent scrolling on touch devices
 
-        const { x, y } = getCanvasCoordinates(e);
-        ctx.beginPath();
-        ctx.moveTo(x, y);
+        let offsetX, offsetY;
+        if ("touches" in nativeEvent) {
+            const rect = canvasRef.current?.getBoundingClientRect();
+            offsetX = nativeEvent.touches[0].clientX - (rect?.left || 0);
+            offsetY = nativeEvent.touches[0].clientY - (rect?.top || 0);
+        } else {
+            offsetX = (nativeEvent as MouseEvent).offsetX;
+            offsetY = (nativeEvent as MouseEvent).offsetY;
+        }
+
+        contextRef.current?.lineTo(offsetX, offsetY);
+        contextRef.current?.stroke();
     };
 
     const stopDrawing = () => {
-        if (!isDrawingRef.current) return;
-        isDrawingRef.current = false;
+        if (!isDrawing) return;
+        contextRef.current?.closePath();
+        setIsDrawing(false);
 
+        // Sync to backend when stroke ends
         if (canvasRef.current) {
-            const dataUrl = canvasRef.current.toDataURL();
-            socket.emit("detective_sync_canvas", { roomCode: room.code, canvasData: dataUrl });
+            const canvasData = canvasRef.current.toDataURL("image/png");
+            socket.emit("detective_sync_canvas", { roomCode: room.code, canvasData });
         }
     };
 
-    const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-        if (!isDrawingRef.current || !canvasRef.current) return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        const { x, y } = getCanvasCoordinates(e);
-
-        ctx.lineWidth = 3;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = "#ffffff";
-
-        ctx.lineTo(x, y);
-        ctx.stroke();
+    const clearCanvas = () => {
+        if (contextRef.current && canvasRef.current) {
+            contextRef.current.fillStyle = "#ffffff";
+            contextRef.current.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            const canvasData = canvasRef.current.toDataURL("image/png");
+            socket.emit("detective_sync_canvas", { roomCode: room.code, canvasData });
+        }
     };
 
-    if (!gameState) {
-        return (
-            <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
-                <h1 className="text-3xl font-black mb-4">🕵️‍♂️ Detective Caricature</h1>
-                <div className="animate-spin text-4xl mt-4">⏳</div>
-            </div>
-        );
+    const endGame = (success: boolean) => {
+        socket.emit("detective_end", { roomCode: room.code, success });
+    };
+
+    if (!gameState.gameStatus) {
+        return <div className="text-center p-8">Loading Detective Game...</div>;
     }
 
-    const { myRole, timeLeft, gameStatus, suspectImage, finalCanvas } = gameState;
-
     return (
-        <div className="flex flex-col md:flex-row h-screen bg-slate-950 text-white overflow-hidden">
-            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0 flex flex-col">
-                <VideoCall roomCode={room.code} opponentName={opponentName} />
-                <div className="p-4 mt-auto">
-                    <button onClick={() => socket.emit("return_lobby", room.code)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl transition text-sm">
-                        Exit to Lobby
-                    </button>
-                </div>
-            </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-4">
+            <div className="max-w-4xl w-full bg-slate-800 p-6 rounded-2xl shadow-2xl border border-slate-700">
 
-            <div className="flex-1 flex flex-col p-4 overflow-y-auto">
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex justify-between items-center mb-4">
+                {/* Header Area */}
+                <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
                     <div>
-                        <h1 className="text-xl font-bold">Role: <span className={myRole === "describer" ? "text-amber-400" : "text-emerald-400"}>{myRole.toUpperCase()}</span></h1>
-                        <p className="text-xs text-slate-400">
-                            {myRole === "describer" ? "Describe the suspect face features to the artist!" : "Draw the suspect sketch based on vocal clues!"}
+                        <h2 className="text-2xl font-bold text-white">Detective Caricature 🔍</h2>
+                        <p className="text-slate-400">
+                            Role: <span className="font-semibold text-cyan-400 uppercase">{gameState.myRole}</span>
                         </p>
                     </div>
-                    <div className="text-center">
-                        <span className="text-xs text-slate-400 block">TIME REMAINING</span>
-                        <span className="text-2xl font-mono font-bold text-amber-400">{timeLeft}s</span>
+                    <div className="text-right">
+                        <div className={`text-4xl font-mono font-black ${gameState.timeLeft <= 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                            00:{gameState.timeLeft.toString().padStart(2, '0')}
+                        </div>
+                        <p className="text-slate-400 text-sm">Time Remaining</p>
                     </div>
                 </div>
 
-                {gameStatus === "playing" && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center justify-center">
-                            <h2 className="text-xs font-bold text-slate-400 mb-3 uppercase">Suspect Target Photo</h2>
-                            {myRole === "describer" ? (
-                                <img src={suspectImage} alt="Suspect" className="max-h-80 rounded-xl object-cover shadow-lg border border-slate-700" />
-                            ) : (
-                                <div className="h-80 w-full bg-slate-950 rounded-xl flex items-center justify-center text-slate-600 text-sm font-semibold border border-slate-800">
-                                    🔒 HIDDEN FROM ARTIST
+                {/* Game Area */}
+                <div className="flex flex-col md:flex-row gap-6">
+
+                    {/* Left Column: Suspect Image (Describer) or Instructions (Artist) */}
+                    <div className="flex-1 flex flex-col items-center bg-slate-900/50 p-4 rounded-xl border border-slate-600/50">
+                        {gameState.myRole === "describer" ? (
+                            <>
+                                <h3 className="text-lg font-semibold text-white mb-4">Describe this Suspect!</h3>
+                                {gameState.suspectImage ? (
+                                    <img
+                                        src={gameState.suspectImage}
+                                        alt="Suspect"
+                                        className="w-full max-w-sm rounded-lg shadow-md border-2 border-slate-700"
+                                    />
+                                ) : (
+                                    <div className="w-full max-w-sm aspect-square bg-slate-700 animate-pulse rounded-lg" />
+                                )}
+                                <p className="mt-4 text-sm text-slate-400 text-center">
+                                    Detail their face, hair, and accessories to the artist.
+                                </p>
+                            </>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-4">
+                                <div className="text-6xl">👂</div>
+                                <h3 className="text-xl font-bold text-white">Listen Carefully!</h3>
+                                <p className="text-slate-400">
+                                    The Describer is looking at a photo. Draw exactly what they describe to catch the suspect.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Right Column: Canvas & Toolbar */}
+                    <div className="flex-1 flex flex-col items-center">
+                        {/* Toolbar (Only for Artist) */}
+                        {gameState.myRole === "artist" && gameState.gameStatus === "playing" && (
+                            <div className="w-full max-w-sm flex flex-wrap gap-3 mb-4 p-3 bg-slate-900 rounded-xl border border-slate-700 items-center justify-center">
+
+                                {/* Colors */}
+                                <div className="flex gap-2 border-r border-slate-700 pr-3">
+                                    {COLORS.map((c) => (
+                                        <button
+                                            key={c.name}
+                                            onClick={() => { setBrushColor(c.hex); setIsEraser(false); }}
+                                            className={`w-6 h-6 rounded-full border-2 transition-transform ${brushColor === c.hex && !isEraser ? 'scale-125 border-white' : 'border-transparent hover:scale-110'}`}
+                                            style={{ backgroundColor: c.hex }}
+                                            title={c.name}
+                                        />
+                                    ))}
+                                </div>
+
+                                {/* Eraser */}
+                                <button
+                                    onClick={() => setIsEraser(true)}
+                                    className={`px-3 py-1 rounded-md text-sm font-bold transition-colors ${isEraser ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                                >
+                                    Eraser
+                                </button>
+
+                                {/* Size Slider */}
+                                <div className="flex items-center gap-2 pl-2">
+                                    <span className="text-xs text-slate-400">Size:</span>
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="20"
+                                        value={brushSize}
+                                        onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                                        className="w-20 accent-cyan-500"
+                                    />
+                                </div>
+
+                                {/* Clear Canvas */}
+                                <button
+                                    onClick={clearCanvas}
+                                    className="ml-auto text-xs text-red-400 hover:text-red-300 font-semibold"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Canvas Area */}
+                        <div className="relative">
+                            <canvas
+                                ref={canvasRef}
+                                onMouseDown={startDrawing}
+                                onMouseMove={draw}
+                                onMouseUp={stopDrawing}
+                                onMouseOut={stopDrawing}
+                                onTouchStart={startDrawing}
+                                onTouchMove={draw}
+                                onTouchEnd={stopDrawing}
+                                className={`bg-white rounded-lg shadow-inner cursor-crosshair border-4 ${gameState.gameStatus === "reveal" ? "border-amber-500" : "border-slate-600"
+                                    }`}
+                                style={{
+                                    width: '100%',
+                                    maxWidth: '400px',
+                                    aspectRatio: '1/1',
+                                    pointerEvents: (gameState.myRole === "artist" && gameState.gameStatus === "playing") ? 'auto' : 'none'
+                                }}
+                            />
+
+                            {/* Describer Overlay Text */}
+                            {gameState.myRole === "describer" && gameState.gameStatus === "playing" && (
+                                <div className="absolute top-2 left-2 bg-slate-900/80 text-cyan-400 text-xs px-2 py-1 rounded font-semibold">
+                                    Live View
                                 </div>
                             )}
                         </div>
-
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center justify-center">
-                            <h2 className="text-xs font-bold text-slate-400 mb-3 uppercase">Caricature Sketch Board</h2>
-                            <canvas
-                                ref={canvasRef}
-                                width={350}
-                                height={320}
-                                onMouseDown={startDrawing}
-                                onMouseUp={stopDrawing}
-                                onMouseLeave={stopDrawing}
-                                onMouseMove={draw}
-                                onTouchStart={startDrawing}
-                                onTouchEnd={stopDrawing}
-                                onTouchMove={draw}
-                                className={`bg-slate-950 rounded-xl border border-slate-800 touch-none ${myRole === "artist" ? "cursor-crosshair bg-slate-900" : "pointer-events-none"}`}
-                            />
-                        </div>
                     </div>
-                )}
+                </div>
 
-                {gameStatus === "reveal" && (
-                    <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col items-center justify-center">
-                        <h2 className="text-2xl font-black text-amber-400 mb-6">🎭 THE REVEAL COMPARISON</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl w-full mb-6">
-                            <div className="text-center">
-                                <span className="text-xs font-bold text-slate-400 block mb-2">ORIGINAL SUSPECT</span>
-                                <img src={suspectImage} alt="Original Suspect" className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl" />
-                            </div>
-                            <div className="text-center">
-                                <span className="text-xs font-bold text-slate-400 block mb-2">ARTIST SKETCH</span>
-                                <img src={finalCanvas || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="} alt="Artist Sketch" className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl bg-slate-950" />
-                            </div>
-                        </div>
+                {/* Post-Game Reveal Area */}
+                {gameState.gameStatus === "reveal" && (
+                    <div className="mt-8 pt-6 border-t border-slate-700 animate-fade-in-up">
+                        <h3 className="text-2xl font-bold text-center text-amber-400 mb-6">Time's Up! The Reveal...</h3>
 
-                        <div className="flex gap-4">
-                            <button onClick={() => handleEndGameWithScore(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-xl transition">
-                                Good Match! (+5 pts)
+                        {gameState.myRole === "artist" && (
+                            <div className="flex flex-col items-center mb-8">
+                                <p className="text-slate-300 mb-4">Here is the actual suspect you were trying to draw:</p>
+                                <img
+                                    src={gameState.suspectImage}
+                                    alt="Actual Suspect"
+                                    className="w-full max-w-xs rounded-lg shadow-lg border-2 border-slate-600"
+                                />
+                            </div>
+                        )}
+
+                        <div className="flex justify-center gap-4">
+                            <button
+                                onClick={() => endGame(true)}
+                                className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg shadow-green-500/30 transition-all"
+                            >
+                                It's a Match! (+5 pts)
                             </button>
-                            <button onClick={() => handleEndGameWithScore(false)} className="bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-xl transition">
-                                Terrible Match (0 pts)
+                            <button
+                                onClick={() => endGame(false)}
+                                className="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg shadow-red-500/30 transition-all"
+                            >
+                                No Resemblance
                             </button>
                         </div>
                     </div>
