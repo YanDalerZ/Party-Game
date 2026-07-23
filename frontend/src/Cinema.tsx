@@ -31,32 +31,45 @@ export default function Cinema({ room, myId }: Props) {
     const [inputUrl, setInputUrl] = useState("");
     const [videoId, setVideoId] = useState<string | null>(null);
 
-    // Screen Share state
+    // Screen share UI state
     const [isSharingScreen, setIsSharingScreen] = useState(false);
     const [hasRemoteScreen, setHasRemoteScreen] = useState(false);
+    const [isMobileDevice, setIsMobileDevice] = useState(false);
 
-    // Refs for Video & WebRTC
+    // Screen share DOM element refs
     const localScreenRef = useRef<HTMLVideoElement | null>(null);
     const remoteScreenRef = useRef<HTMLVideoElement | null>(null);
+
+    // WebRTC & YouTube Sync Refs
     const screenStreamRef = useRef<MediaStream | null>(null);
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-
-    // YouTube Sync Refs
+    const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
     const playerRef = useRef<any>(null);
     const isRemoteAction = useRef<boolean>(false);
 
     const opponent = room.players.find((p) => p.id !== myId);
     const opponentName = opponent ? opponent.name : "Waiting for opponent...";
 
+    // Detect Mobile Devices on Mount
+    useEffect(() => {
+        const checkMobile =
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent
+            ) ||
+            ("ontouchstart" in window && navigator.maxTouchPoints > 0);
+        setIsMobileDevice(checkMobile);
+    }, []);
+
     /* ===================================================================
-       1. YOUTUBE PLAYER & SYNC LOGIC
+       1. YOUTUBE IFRAME PLAYER SYNC LOGIC
        =================================================================== */
 
     const extractYouTubeId = (url: string): string | null => {
         const trimmed = url.trim();
         if (!trimmed) return null;
 
-        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const regExp =
+            /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
         const match = trimmed.match(regExp);
 
         return match && match[2].length === 11 ? match[2] : null;
@@ -114,7 +127,6 @@ export default function Cinema({ room, myId }: Props) {
         const currentTime = playerRef.current.getCurrentTime();
         const playerState = event.data;
 
-        // YT.PlayerState.PLAYING = 1, PAUSED = 2
         if (playerState === 1) {
             socket.emit("cinema_sync_action", {
                 roomCode: room.code,
@@ -138,7 +150,10 @@ export default function Cinema({ room, myId }: Props) {
         if (peerConnectionRef.current) return peerConnectionRef.current;
 
         const pc = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" },
+            ],
         });
 
         pc.onicecandidate = (event) => {
@@ -151,9 +166,28 @@ export default function Cinema({ room, myId }: Props) {
         };
 
         pc.ontrack = (event) => {
+            console.log("🎬 [Cinema WebRTC] Received Remote Screen Track!");
             if (remoteScreenRef.current && event.streams[0]) {
                 remoteScreenRef.current.srcObject = event.streams[0];
                 setHasRemoteScreen(true);
+                setMode("screenshare");
+
+                // Force play on mobile to bypass browser autoplay restrictions
+                remoteScreenRef.current
+                    .play()
+                    .catch((err) =>
+                        console.warn("Mobile autoplay trigger warning:", err)
+                    );
+            }
+        };
+
+        pc.onconnectionstatechange = () => {
+            console.log("🎬 [Cinema WebRTC] Connection State:", pc.connectionState);
+            if (
+                pc.connectionState === "disconnected" ||
+                pc.connectionState === "failed"
+            ) {
+                setHasRemoteScreen(false);
             }
         };
 
@@ -161,10 +195,35 @@ export default function Cinema({ room, myId }: Props) {
         return pc;
     };
 
+    const processBufferedIceCandidates = async () => {
+        if (!peerConnectionRef.current) return;
+        while (iceCandidatesQueue.current.length > 0) {
+            const candidate = iceCandidatesQueue.current.shift();
+            if (candidate) {
+                try {
+                    await peerConnectionRef.current.addIceCandidate(
+                        new RTCIceCandidate(candidate)
+                    );
+                } catch (e) {
+                    console.error("Error adding buffered ICE candidate", e);
+                }
+            }
+        }
+    };
+
     const startScreenShare = async () => {
+        if (isMobileDevice) {
+            alert(
+                "Screen sharing is not supported on mobile web browsers. You can still watch screen shares hosted from a desktop!"
+            );
+            return;
+        }
+
         try {
             const stream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
+                video: {
+                    cursor: "always",
+                } as any,
                 audio: true,
             });
 
@@ -186,7 +245,6 @@ export default function Cinema({ room, myId }: Props) {
 
             setIsSharingScreen(true);
 
-            // Handle user stopping stream via browser UI stop button
             stream.getVideoTracks()[0].onended = () => {
                 stopScreenShare();
             };
@@ -227,11 +285,19 @@ export default function Cinema({ room, myId }: Props) {
             }
         };
 
-        const handleSyncAction = ({ action, currentTime }: { action: "play" | "pause" | "seek"; currentTime: number }) => {
+        const handleSyncAction = ({
+            action,
+            currentTime,
+        }: {
+            action: "play" | "pause" | "seek";
+            currentTime: number;
+        }) => {
             if (!playerRef.current) return;
 
             isRemoteAction.current = true;
-            const timeDiff = Math.abs(playerRef.current.getCurrentTime() - currentTime);
+            const timeDiff = Math.abs(
+                playerRef.current.getCurrentTime() - currentTime
+            );
 
             if (timeDiff > 1.5) {
                 playerRef.current.seekTo(currentTime, true);
@@ -244,11 +310,17 @@ export default function Cinema({ room, myId }: Props) {
             }
         };
 
-        // WebRTC Screen Share Signaling
-        const handleScreenOffer = async ({ offer }: { offer: RTCSessionDescriptionInit }) => {
+        const handleScreenOffer = async ({
+            offer,
+        }: {
+            offer: RTCSessionDescriptionInit;
+        }) => {
+            console.log("🎬 [Cinema WebRTC] Handling Screen Offer...");
             setMode("screenshare");
             const pc = createPeerConnection();
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            await processBufferedIceCandidates();
+
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
 
@@ -258,22 +330,50 @@ export default function Cinema({ room, myId }: Props) {
             });
         };
 
-        const handleScreenAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
+        const handleScreenAnswer = async ({
+            answer,
+        }: {
+            answer: RTCSessionDescriptionInit;
+        }) => {
+            console.log("🎬 [Cinema WebRTC] Handling Screen Answer...");
             if (peerConnectionRef.current) {
-                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+                await peerConnectionRef.current.setRemoteDescription(
+                    new RTCSessionDescription(answer)
+                );
+                await processBufferedIceCandidates();
             }
         };
 
-        const handleScreenIce = async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
-            if (peerConnectionRef.current) {
-                await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        const handleScreenIce = async ({
+            candidate,
+        }: {
+            candidate: RTCIceCandidateInit;
+        }) => {
+            if (
+                peerConnectionRef.current &&
+                peerConnectionRef.current.remoteDescription
+            ) {
+                try {
+                    await peerConnectionRef.current.addIceCandidate(
+                        new RTCIceCandidate(candidate)
+                    );
+                } catch (e) {
+                    console.error("Error adding ICE Candidate", e);
+                }
+            } else {
+                iceCandidatesQueue.current.push(candidate);
             }
         };
 
         const handleScreenStop = () => {
+            console.log("🎬 [Cinema WebRTC] Partner Stopped Screen Share.");
             setHasRemoteScreen(false);
             if (remoteScreenRef.current) {
                 remoteScreenRef.current.srcObject = null;
+            }
+            if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
             }
         };
 
@@ -308,7 +408,7 @@ export default function Cinema({ room, myId }: Props) {
 
     return (
         <div className="flex flex-col md:flex-row h-screen w-screen bg-slate-900 text-white overflow-hidden">
-            {/* Sidebar: Purely for Audio/Video Call status */}
+            {/* Voice & Call Sidebar */}
             <aside className="w-full md:w-80 lg:w-96 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 flex flex-col shrink-0 z-10 shadow-lg">
                 <div className="p-3 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -374,15 +474,23 @@ export default function Cinema({ room, myId }: Props) {
                                         ? "🔴 You are sharing your screen"
                                         : hasRemoteScreen
                                             ? "📺 Viewing partner's stream"
-                                            : "Ready to start screen share"}
+                                            : isMobileDevice
+                                                ? "📱 Mobile device: Screen sharing from mobile is unsupported. You can view desktop streams here."
+                                                : "Ready to start screen share"}
                                 </div>
                                 <div>
                                     {!isSharingScreen ? (
                                         <button
                                             onClick={startScreenShare}
-                                            className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded-lg text-xs font-bold transition text-white"
+                                            disabled={isMobileDevice}
+                                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition text-white ${isMobileDevice
+                                                    ? "bg-slate-600 opacity-50 cursor-not-allowed"
+                                                    : "bg-indigo-600 hover:bg-indigo-500"
+                                                }`}
                                         >
-                                            Start Sharing Screen
+                                            {isMobileDevice
+                                                ? "Sharing Unsupported on Mobile"
+                                                : "Start Sharing Screen"}
                                         </button>
                                     ) : (
                                         <button
@@ -407,11 +515,13 @@ export default function Cinema({ room, myId }: Props) {
                                         }`}
                                 />
 
-                                {/* Remote Partner Screen Stream */}
+                                {/* Remote Partner Screen Stream (Configured for Mobile WebRTC Playback) */}
                                 <video
                                     ref={remoteScreenRef}
                                     autoPlay
                                     playsInline
+                                    muted
+                                    controls
                                     className={`w-full h-full object-contain ${!isSharingScreen && hasRemoteScreen ? "block" : "hidden"
                                         }`}
                                 />
@@ -421,7 +531,9 @@ export default function Cinema({ room, myId }: Props) {
                                     <div className="text-center p-6 text-slate-500 flex flex-col items-center gap-2">
                                         <div className="text-4xl">🖥️</div>
                                         <p className="text-sm">
-                                            Click <strong>"Start Sharing Screen"</strong> above to stream your browser tab or app window to your partner.
+                                            {isMobileDevice
+                                                ? "Waiting for desktop partner to share screen..."
+                                                : "Click 'Start Sharing Screen' above to stream your tab or window."}
                                         </p>
                                     </div>
                                 )}
@@ -454,7 +566,9 @@ export default function Cinema({ room, myId }: Props) {
                                 {!videoId && (
                                     <div className="absolute text-center p-6 text-slate-500 flex flex-col items-center gap-2 pointer-events-none">
                                         <div className="text-4xl">🍿</div>
-                                        <p className="text-sm">No video loaded yet. Paste a YouTube link above to sync playback!</p>
+                                        <p className="text-sm">
+                                            No video loaded yet. Paste a YouTube link above to sync playback!
+                                        </p>
                                     </div>
                                 )}
                             </div>
