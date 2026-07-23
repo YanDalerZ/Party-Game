@@ -170,30 +170,34 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
     };
 
     return (
-        <div className="w-64 bg-slate-800 border-r border-slate-700 h-screen flex flex-col p-4 shadow-xl shrink-0 z-10">
-            <div className="flex items-center gap-2 mb-6">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
-                <span className="font-semibold text-slate-200">
-                    {isConnected ? "Live Call" : "Connecting..."}
-                </span>
+        <div className="w-full md:w-64 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 h-auto md:h-screen flex flex-col p-3 md:p-4 shadow-xl shrink-0 z-10 transition-all">
+            {/* Header / Status indicator */}
+            <div className="flex items-center justify-between md:justify-start gap-2 mb-3 md:mb-6">
+                <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
+                    <span className="text-sm md:text-base font-semibold text-slate-200">
+                        {isConnected ? "Live Call" : "Connecting..."}
+                    </span>
+                </div>
             </div>
 
-            <div className="flex-1 flex flex-col gap-4">
-                {/* Remote Video (Top) */}
-                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg flex-1">
+            {/* Video Streams Container */}
+            <div className="flex-1 grid grid-cols-2 md:grid-cols-1 gap-2 md:gap-4">
+                {/* Remote Video */}
+                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg aspect-video md:aspect-auto md:flex-1">
                     <video
                         ref={remoteVideoRef}
                         autoPlay
                         playsInline
                         className="absolute inset-0 w-full h-full object-cover"
                     />
-                    <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-xs font-medium backdrop-blur-sm">
+                    <div className="absolute bottom-1.5 left-1.5 md:bottom-2 md:left-2 bg-black/60 px-1.5 py-0.5 md:px-2 md:py-1 rounded text-[10px] md:text-xs font-medium backdrop-blur-sm text-slate-200 truncate max-w-[90%]">
                         {isConnected ? opponentName : "Connecting..."}
                     </div>
                 </div>
 
-                {/* Local Video (Bottom) */}
-                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg flex-1">
+                {/* Local Video */}
+                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg aspect-video md:aspect-auto md:flex-1">
                     <video
                         ref={localVideoRef}
                         autoPlay
@@ -201,23 +205,24 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                         muted
                         className="absolute inset-0 w-full h-full object-cover -scale-x-100"
                     />
-                    <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-xs font-medium backdrop-blur-sm">
+                    <div className="absolute bottom-1.5 left-1.5 md:bottom-2 md:left-2 bg-black/60 px-1.5 py-0.5 md:px-2 md:py-1 rounded text-[10px] md:text-xs font-medium backdrop-blur-sm text-slate-200">
                         You
                     </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mt-4">
+            {/* Control Buttons */}
+            <div className="grid grid-cols-2 gap-2 mt-3 md:mt-4">
                 <button
                     onClick={toggleAudio}
-                    className={`py-3 rounded-lg font-medium transition-colors ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                    className={`py-2 md:py-3 text-xs md:text-sm rounded-lg font-medium transition-colors text-white ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
                         }`}
                 >
                     {isAudioMuted ? "🔇 Muted" : "🎤 Mic On"}
                 </button>
                 <button
                     onClick={toggleVideo}
-                    className={`py-3 rounded-lg font-medium transition-colors ${isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                    className={`py-2 md:py-3 text-xs md:text-sm rounded-lg font-medium transition-colors text-white ${isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
                         }`}
                 >
                     {isVideoOff ? "🚫 Cam Off" : "📷 Cam On"}

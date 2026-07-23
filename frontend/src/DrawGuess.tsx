@@ -8,12 +8,35 @@ interface Props {
     myId: string;
 }
 
+type ToolMode = "brush" | "eraser";
+type LineStyle = "solid" | "dashed";
+
+const COLOR_PRESETS = [
+    "#3b82f6", // Blue
+    "#ef4444", // Red
+    "#10b981", // Green
+    "#f59e0b", // Amber
+    "#8b5cf6", // Purple
+    "#ec4899", // Pink
+    "#000000", // Black
+    "#ffffff", // White
+];
+
+const BRUSH_SIZES = [2, 4, 8, 16];
+
 export default function DrawGuess({ room, myId }: Props) {
     const [data, setData] = useState(room.gameData);
     const [timer, setTimer] = useState(60);
     const [rngDisplay, setRngDisplay] = useState("Selecting Drawer...");
     const [guessInput, setGuessInput] = useState("");
     const [chatLog, setChatLog] = useState<{ name: string; guess: string }[]>([]);
+
+    // Drawing Tools State
+    const [selectedColor, setSelectedColor] = useState("#3b82f6");
+    const [brushSize, setBrushSize] = useState(4);
+    const [toolMode, setToolMode] = useState<ToolMode>("brush");
+    const [lineStyle, setLineStyle] = useState<LineStyle>("solid");
+
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -30,9 +53,12 @@ export default function DrawGuess({ room, myId }: Props) {
             }
         });
 
-        socket.on("g2_draw_line", ({ x0, y0, x1, y1 }) => {
-            drawLine(x0, y0, x1, y1, false);
-        });
+        socket.on(
+            "g2_draw_line",
+            ({ x0, y0, x1, y1, color, size, style }: { x0: number; y0: number; x1: number; y1: number; color?: string; size?: number; style?: LineStyle }) => {
+                drawLine(x0, y0, x1, y1, false, color, size, style);
+            }
+        );
 
         socket.on("g2_clear_canvas", () => {
             clearLocalCanvas();
@@ -76,24 +102,47 @@ export default function DrawGuess({ room, myId }: Props) {
         y0: number,
         x1: number,
         y1: number,
-        emit: boolean
+        emit: boolean,
+        color?: string,
+        size?: number,
+        style?: LineStyle
     ) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
+        const activeColor = color ?? (toolMode === "eraser" ? "#ffffff" : selectedColor);
+        const activeSize = size ?? (toolMode === "eraser" ? brushSize * 3 : brushSize);
+        const activeStyle = style ?? lineStyle;
+
         ctx.beginPath();
         ctx.moveTo(x0, y0);
         ctx.lineTo(x1, y1);
-        ctx.strokeStyle = "#3b82f6";
-        ctx.lineWidth = 4;
+        ctx.strokeStyle = activeColor;
+        ctx.lineWidth = activeSize;
         ctx.lineCap = "round";
+
+        if (activeStyle === "dashed") {
+            ctx.setLineDash([activeSize * 2, activeSize * 2]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
         ctx.stroke();
         ctx.closePath();
 
         if (emit) {
-            socket.emit("g2_draw_line", { roomCode: room.code, x0, y0, x1, y1 });
+            socket.emit("g2_draw_line", {
+                roomCode: room.code,
+                x0,
+                y0,
+                x1,
+                y1,
+                color: activeColor,
+                size: activeSize,
+                style: activeStyle,
+            });
         }
     };
 
@@ -320,26 +369,136 @@ export default function DrawGuess({ room, myId }: Props) {
                                     />
                                 </div>
 
+                                {/* Drawing Toolbar controls */}
                                 {isDrawer && (
-                                    <button
-                                        onClick={clearCanvas}
-                                        className="mt-3 sm:mt-4 bg-slate-700 hover:bg-slate-600 text-white px-4 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2"
-                                    >
-                                        <svg
-                                            className="w-4 h-4"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
-                                        >
-                                            <path
-                                                strokeLinecap="round"
-                                                strokeLinejoin="round"
-                                                strokeWidth="2"
-                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                            ></path>
-                                        </svg>
-                                        Clear Canvas
-                                    </button>
+                                    <div className="w-full max-w-[600px] mt-3 sm:mt-4 flex flex-col gap-3 bg-slate-900/80 p-3 rounded-xl border border-slate-700">
+                                        {/* Tools & Palette Row */}
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            {/* Mode Toggles */}
+                                            <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700">
+                                                <button
+                                                    onClick={() => setToolMode("brush")}
+                                                    className={`px-3 py-1.5 rounded text-xs font-semibold transition ${toolMode === "brush"
+                                                            ? "bg-violet-600 text-white"
+                                                            : "text-slate-400 hover:text-white"
+                                                        }`}
+                                                >
+                                                    Brush
+                                                </button>
+                                                <button
+                                                    onClick={() => setToolMode("eraser")}
+                                                    className={`px-3 py-1.5 rounded text-xs font-semibold transition ${toolMode === "eraser"
+                                                            ? "bg-violet-600 text-white"
+                                                            : "text-slate-400 hover:text-white"
+                                                        }`}
+                                                >
+                                                    Eraser
+                                                </button>
+                                            </div>
+
+                                            {/* Line Style Toggles */}
+                                            {toolMode === "brush" && (
+                                                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700">
+                                                    <button
+                                                        onClick={() => setLineStyle("solid")}
+                                                        className={`px-2.5 py-1.5 rounded text-xs font-semibold transition ${lineStyle === "solid"
+                                                                ? "bg-slate-700 text-white"
+                                                                : "text-slate-400 hover:text-white"
+                                                            }`}
+                                                    >
+                                                        Solid
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setLineStyle("dashed")}
+                                                        className={`px-2.5 py-1.5 rounded text-xs font-semibold transition ${lineStyle === "dashed"
+                                                                ? "bg-slate-700 text-white"
+                                                                : "text-slate-400 hover:text-white"
+                                                            }`}
+                                                    >
+                                                        Dashed
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {/* Clear Canvas */}
+                                            <button
+                                                onClick={clearCanvas}
+                                                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ml-auto"
+                                            >
+                                                <svg
+                                                    className="w-3.5 h-3.5"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                >
+                                                    <path
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                        strokeWidth="2"
+                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                                    ></path>
+                                                </svg>
+                                                Clear
+                                            </button>
+                                        </div>
+
+                                        {/* Color Palette & Custom Picker */}
+                                        {toolMode === "brush" && (
+                                            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                                                <span className="text-xs text-slate-400 font-medium shrink-0">
+                                                    Color:
+                                                </span>
+                                                <div className="flex items-center gap-1.5">
+                                                    {COLOR_PRESETS.map((color) => (
+                                                        <button
+                                                            key={color}
+                                                            onClick={() => setSelectedColor(color)}
+                                                            className={`w-6 h-6 rounded-full border transition transform hover:scale-110 ${selectedColor === color
+                                                                    ? "border-white scale-110 ring-2 ring-violet-500"
+                                                                    : "border-slate-600"
+                                                                }`}
+                                                            style={{ backgroundColor: color }}
+                                                        />
+                                                    ))}
+                                                    <label className="w-6 h-6 rounded-full border border-slate-600 bg-slate-800 flex items-center justify-center cursor-pointer hover:scale-110 transition shrink-0 relative overflow-hidden">
+                                                        <input
+                                                            type="color"
+                                                            value={selectedColor}
+                                                            onChange={(e) => setSelectedColor(e.target.value)}
+                                                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                                        />
+                                                        <span className="text-[10px] text-slate-300 font-bold">
+                                                            +
+                                                        </span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Brush Sizes */}
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-xs text-slate-400 font-medium shrink-0">
+                                                Size:
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                {BRUSH_SIZES.map((size) => (
+                                                    <button
+                                                        key={size}
+                                                        onClick={() => setBrushSize(size)}
+                                                        className={`flex items-center justify-center p-2 rounded-lg border transition ${brushSize === size
+                                                                ? "border-violet-500 bg-violet-500/20"
+                                                                : "border-slate-700 bg-slate-800 hover:bg-slate-700"
+                                                            }`}
+                                                    >
+                                                        <span
+                                                            className="rounded-full bg-slate-200"
+                                                            style={{ width: `${size * 1.5 + 2}px`, height: `${size * 1.5 + 2}px` }}
+                                                        />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
 

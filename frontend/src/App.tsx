@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { socket } from "./socket";
 import GuessNumber from "./GuessNumber";
 import DrawGuess from "./DrawGuess";
+// Import your Cinema component here if available:
+// import Cinema from "./Cinema"; 
 
 export interface Player { id: string; name: string; }
 export interface Room { code: string; players: Player[]; currentGame: string | null; gameData: any; }
@@ -44,6 +46,8 @@ export default function App() {
 
   if (room && room.currentGame === "guess_number") return <GuessNumber room={room} myId={socket.id || ''} />;
   if (room && room.currentGame === "draw_guess") return <DrawGuess room={room} myId={socket.id || ''} />;
+  // Render your Cinema view component when room.currentGame is "cinema"
+  // if (room && room.currentGame === "cinema") return <Cinema room={room} myId={socket.id || ''} />;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-4">
@@ -143,6 +147,13 @@ export default function App() {
                   className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-violet-500/30 flex justify-between px-6 items-center"
                 >
                   <span>2️⃣ Draw & Guess</span>
+                  <span>→</span>
+                </button>
+                <button
+                  onClick={() => startGame("cinema")}
+                  className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-pink-500/30 flex justify-between px-6 items-center"
+                >
+                  <span>3️⃣ Cinema 🍿</span>
                   <span>→</span>
                 </button>
               </div>

@@ -298,6 +298,13 @@ io.on("connection", (socket) => {
             }
         }
     });
+    // ==========================================
+    // CINEMA / WATCH TOGETHER HANDLERS
+    // ==========================================
+    socket.on("cinema_change_url", ({ roomCode, url }: { roomCode: string; url: string }) => {
+        console.log(`[CINEMA] URL changed in room ${roomCode} to: ${url}`);
+        io.to(roomCode).emit("cinema_url_updated", url);
+    });
 });
 
 // Wildcard fallback to serve index.html for client-side routing
