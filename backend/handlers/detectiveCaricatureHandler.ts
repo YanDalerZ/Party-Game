@@ -26,7 +26,7 @@ async function fetchRandomSuspectImage(): Promise<string> {
 export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, rooms: Record<string, any>) {
     function sendDetectiveUpdate(roomCode: string) {
         const room = rooms[roomCode];
-        if (!room) return;
+        if (!room || !room.gameData) return;
 
         room.players.forEach((p: any) => {
             const myRole = p.id === room.gameData.describer ? "describer" : "artist";
@@ -36,6 +36,10 @@ export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, 
             });
         });
     }
+
+    socket.on("get_detective_state", (roomCode: string) => {
+        sendDetectiveUpdate(roomCode);
+    });
 
     socket.on("detective_start", async (roomCode: string) => {
         const room = rooms[roomCode];
@@ -60,6 +64,9 @@ export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, 
             gameStatus: "playing",
             timer: null
         };
+
+        // Notify client App component to switch views
+        io.to(roomCode).emit("game_started", room);
 
         room.gameData.timer = setInterval(() => {
             if (room.gameData && room.gameData.gameStatus === "playing") {
@@ -86,13 +93,18 @@ export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, 
         const room = rooms[roomCode];
         if (!room || room.currentGame !== "detective") return;
 
+        if (room.gameData?.timer) {
+            clearInterval(room.gameData.timer);
+        }
+
         if (success) {
             room.players.forEach((p: any) => {
                 room.globalScores[p.id] = (room.globalScores[p.id] || 0) + 5;
             });
-            io.to(roomCode).emit("room_updated", room);
         }
 
-        socket.emit("return_lobby", roomCode);
+        room.currentGame = null;
+        room.gameData = null;
+        io.to(roomCode).emit("room_updated", room);
     });
 }

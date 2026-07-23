@@ -20,10 +20,13 @@ export default function DetectiveCaricature({ room, myId }: Props) {
         const handleDetectiveUpdated = (data: any) => setGameState(data);
         socket.on("detective_updated", handleDetectiveUpdated);
 
+        // Fetch current state on component mount
+        socket.emit("get_detective_state", room.code);
+
         return () => {
             socket.off("detective_updated", handleDetectiveUpdated);
         };
-    }, []);
+    }, [room.code]);
 
     const handleEndGameWithScore = (success: boolean) => {
         socket.emit("detective_end", { roomCode: room.code, success });

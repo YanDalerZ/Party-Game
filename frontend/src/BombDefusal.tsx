@@ -20,10 +20,13 @@ export default function BombDefusal({ room, myId }: Props) {
         const handleBombUpdated = (data: any) => setGameState(data);
         socket.on("bomb_updated", handleBombUpdated);
 
+        // Fetch current state on component mount
+        socket.emit("get_bomb_state", room.code);
+
         return () => {
             socket.off("bomb_updated", handleBombUpdated);
         };
-    }, []);
+    }, [room.code]);
 
     const startNewGame = () => {
         socket.emit("bomb_start", room.code);

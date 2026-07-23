@@ -5,7 +5,7 @@ const BOMB_PASSWORDS = ["REACT", "SOCKET", "NODEJS", "CYBER", "SNAKE"];
 export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: Record<string, any>) {
     function sendBombUpdate(roomCode: string) {
         const room = rooms[roomCode];
-        if (!room) return;
+        if (!room || !room.gameData) return;
 
         room.players.forEach((p: any) => {
             const role = p.id === room.gameData.defuser ? "defuser" : "expert";
@@ -15,6 +15,10 @@ export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: R
             });
         });
     }
+
+    socket.on("get_bomb_state", (roomCode: string) => {
+        sendBombUpdate(roomCode);
+    });
 
     socket.on("bomb_start", (roomCode: string) => {
         const room = rooms[roomCode];
@@ -52,6 +56,9 @@ export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: R
             },
             timer: null
         };
+
+        // Notify client App component to switch views
+        io.to(roomCode).emit("game_started", room);
 
         room.gameData.timer = setInterval(() => {
             if (room.gameData && room.gameData.gameStatus === "playing") {
@@ -130,7 +137,6 @@ export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: R
                 data.winner = true;
                 if (data.timer) clearInterval(data.timer);
 
-                // Add global scores for both co-op players
                 room.players.forEach((p: any) => {
                     room.globalScores[p.id] = (room.globalScores[p.id] || 0) + 10;
                 });
