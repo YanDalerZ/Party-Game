@@ -7,10 +7,13 @@ export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: R
         const room = rooms[roomCode];
         if (!room || !room.gameData) return;
 
+        // Exclude the circular 'timer' object from the emitted data
+        const { timer, ...safeGameData } = room.gameData;
+
         room.players.forEach((p: any) => {
             const role = p.id === room.gameData.defuser ? "defuser" : "expert";
             io.to(p.id).emit("bomb_updated", {
-                ...room.gameData,
+                ...safeGameData,
                 role,
             });
         });

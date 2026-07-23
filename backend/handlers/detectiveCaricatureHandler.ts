@@ -28,10 +28,13 @@ export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, 
         const room = rooms[roomCode];
         if (!room || !room.gameData) return;
 
+        // Exclude the circular 'timer' object from the emitted data
+        const { timer, ...safeGameData } = room.gameData;
+
         room.players.forEach((p: any) => {
             const myRole = p.id === room.gameData.describer ? "describer" : "artist";
             io.to(p.id).emit("detective_updated", {
-                ...room.gameData,
+                ...safeGameData,
                 myRole,
             });
         });
