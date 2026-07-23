@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
 import { type Room } from "./App";
+import VideoCall from "./VideoCall";
 
 interface Props { room: Room; myId: string; }
 
@@ -9,19 +10,18 @@ export default function DrawGuess({ room, myId }: Props) {
     const [timer, setTimer] = useState(60);
     const [rngDisplay, setRngDisplay] = useState("Selecting Drawer...");
     const [guessInput, setGuessInput] = useState("");
-    const [chatLog, setChatLog] = useState<string[]>([]);
+    const [chatLog, setChatLog] = useState<{ name: string, guess: string }[]>([]);
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     let isDrawing = false;
-    let lastX = 0;
-    let lastY = 0;
+    let lastX = 0; let lastY = 0;
 
     useEffect(() => {
         socket.on("g2_updated", (newData: any) => setData(newData));
         socket.on("g2_timer", (t: number) => setTimer(t));
         socket.on("g2_wrong_guess", (info: { id: string, guess: string }) => {
             const p = room.players.find(x => x.id === info.id);
-            setChatLog(prev => [...prev, `${p?.name} guessed: ${info.guess}`]);
+            if (p) setChatLog(prev => [...prev, { name: p.name, guess: info.guess }]);
         });
 
         socket.on("g2_draw_line", ({ x0, y0, x1, y1 }) => { drawLine(x0, y0, x1, y1, false); });
@@ -31,15 +31,11 @@ export default function DrawGuess({ room, myId }: Props) {
         });
 
         return () => {
-            socket.off("g2_updated");
-            socket.off("g2_timer");
-            socket.off("g2_wrong_guess");
-            socket.off("g2_draw_line");
-            socket.off("g2_clear_canvas");
+            socket.off("g2_updated"); socket.off("g2_timer"); socket.off("g2_wrong_guess");
+            socket.off("g2_draw_line"); socket.off("g2_clear_canvas");
         };
     }, [room.players]);
 
-    // RNG Animation logic
     useEffect(() => {
         if (data.status === "rng_rolling") {
             let toggle = true;
@@ -51,55 +47,26 @@ export default function DrawGuess({ room, myId }: Props) {
         }
     }, [data.status, room.players]);
 
-    const selectTheme = (theme: string) => {
-        socket.emit("g2_select_theme", { roomCode: room.code, theme });
-    };
-
-    const submitGuess = () => {
-        if (!guessInput.trim()) return;
-        socket.emit("g2_guess", { roomCode: room.code, guess: guessInput });
-        setGuessInput("");
-    };
-
-    const returnToLobby = () => socket.emit("return_lobby", room.code);
-
-    // Canvas Drawing Logic
     const drawLine = (x0: number, y0: number, x1: number, y1: number, emit: boolean) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        ctx.beginPath();
-        ctx.moveTo(x0, y0);
-        ctx.lineTo(x1, y1);
-        ctx.strokeStyle = "black";
-        ctx.lineWidth = 4;
-        ctx.lineCap = "round";
-        ctx.stroke();
-        ctx.closePath();
-
+        const canvas = canvasRef.current; if (!canvas) return;
+        const ctx = canvas.getContext("2d"); if (!ctx) return;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+        ctx.strokeStyle = "#3b82f6"; ctx.lineWidth = 4; ctx.lineCap = "round"; ctx.stroke(); ctx.closePath();
         if (emit) socket.emit("g2_draw_line", { roomCode: room.code, x0, y0, x1, y1 });
     };
 
     const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (data.status !== "drawing" || data.drawerId !== myId) return;
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        isDrawing = true;
-        lastX = e.clientX - rect.left;
-        lastY = e.clientY - rect.top;
+        const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+        isDrawing = true; lastX = e.clientX - rect.left; lastY = e.clientY - rect.top;
     };
 
     const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!isDrawing || data.status !== "drawing" || data.drawerId !== myId) return;
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+        const x = e.clientX - rect.left; const y = e.clientY - rect.top;
         drawLine(lastX, lastY, x, y, true);
-        lastX = x;
-        lastY = y;
+        lastX = x; lastY = y;
     };
 
     const onMouseUp = () => { isDrawing = false; };
@@ -111,88 +78,144 @@ export default function DrawGuess({ room, myId }: Props) {
         }
     };
 
-    const containerStyle: React.CSSProperties = { maxWidth: "800px", margin: "40px auto", padding: "20px", background: "white", borderRadius: "8px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)" };
-    const btnStyle: React.CSSProperties = { background: "#28a745", color: "white", padding: "10px 20px", border: "none", borderRadius: "4px", cursor: "pointer", margin: "5px" };
-    const canvasStyle: React.CSSProperties = { border: "2px solid #ccc", background: "#fff", cursor: data.drawerId === myId ? "crosshair" : "default" };
+    const submitGuess = () => {
+        if (!guessInput.trim()) return;
+        socket.emit("g2_guess", { roomCode: room.code, guess: guessInput });
+        setGuessInput("");
+    };
 
+    const isDrawer = data.drawerId === myId;
+    const drawerName = room.players.find(p => p.id === data.drawerId)?.name;
+    const opponent = room.players.find((p) => p.id !== myId);
+    const opponentName = opponent ? opponent.name : "Opponent";
     return (
-        <div style={containerStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h2>Game 2: Draw & Guess</h2>
-                {data.status === "drawing" && <h2 style={{ color: timer <= 10 ? "red" : "black" }}>⏳ {timer}s</h2>}
-            </div>
-            <hr />
+        <div className="flex h-screen bg-slate-900 text-white overflow-hidden">
+            {/* LEFT: Video Call Sidebar */}
+            <VideoCall roomCode={room.code} opponentName={opponentName} />
 
-            {data.status === "select_theme" && (
-                <div style={{ textAlign: "center", padding: "40px 0" }}>
-                    <h3>Choose a Theme to start</h3>
-                    <button style={btnStyle} onClick={() => selectTheme("animal")}>Animals</button>
-                    <button style={btnStyle} onClick={() => selectTheme("thing")}>Things</button>
-                    <button style={btnStyle} onClick={() => selectTheme("person")}>People / Jobs</button>
-                </div>
-            )}
+            {/* RIGHT: Game Board */}
+            <div className="flex-1 overflow-y-auto p-8">
+                <div className="max-w-5xl mx-auto h-full flex flex-col">
 
-            {data.status === "rng_rolling" && (
-                <div style={{ textAlign: "center", padding: "60px 0" }}>
-                    <h3>Spinning the wheel for the Drawer...</h3>
-                    <h1 style={{ fontSize: "48px", color: "#0066cc" }}>{rngDisplay}</h1>
-                </div>
-            )}
-
-            {data.status === "drawing" && (
-                <div style={{ display: "flex", gap: "20px" }}>
-                    <div>
-                        <div style={{ marginBottom: "10px", fontWeight: "bold" }}>
-                            {data.drawerId === myId ? (
-                                <span style={{ color: "red" }}>You are drawing: {data.word.toUpperCase()}</span>
-                            ) : (
-                                <span style={{ color: "blue" }}>Guess what {room.players.find(p => p.id === data.drawerId)?.name} is drawing!</span>
-                            )}
+                    <div className="flex justify-between items-center bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 mb-6 shrink-0">
+                        <div>
+                            <h2 className="text-3xl font-bold text-violet-400">Draw & Guess</h2>
+                            <p className="text-slate-400 mt-1">Scribble and solve before time runs out!</p>
                         </div>
-
-                        <canvas
-                            ref={canvasRef}
-                            width={500}
-                            height={400}
-                            style={canvasStyle}
-                            onMouseDown={onMouseDown}
-                            onMouseMove={onMouseMove}
-                            onMouseUp={onMouseUp}
-                            onMouseOut={onMouseUp}
-                        />
-                        {data.drawerId === myId && <button style={{ ...btnStyle, display: "block", marginTop: "10px", background: "#dc3545" }} onClick={clearCanvas}>Clear Canvas</button>}
-                    </div>
-
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                        <h3>Guesses</h3>
-                        <div style={{ flex: 1, border: "1px solid #eee", background: "#f9f9f9", padding: "10px", overflowY: "auto", maxHeight: "300px" }}>
-                            {chatLog.map((log, i) => <div key={i} style={{ marginBottom: "5px" }}>{log}</div>)}
-                        </div>
-
-                        {data.drawerId !== myId && (
-                            <div style={{ marginTop: "10px", display: "flex" }}>
-                                <input
-                                    style={{ flex: 1, padding: "10px" }}
-                                    placeholder="Type guess here..."
-                                    value={guessInput}
-                                    onChange={e => setGuessInput(e.target.value)}
-                                    onKeyDown={e => e.key === "Enter" && submitGuess()}
-                                />
-                                <button style={{ ...btnStyle, margin: "0 0 0 10px" }} onClick={submitGuess}>Guess</button>
+                        {data.status === "drawing" && (
+                            <div className={`text-4xl font-black ${timer <= 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                                {timer}s
                             </div>
                         )}
+                        <button onClick={() => socket.emit("return_lobby", room.code)} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-medium transition">
+                            Exit to Lobby
+                        </button>
+                    </div>
+
+                    <div className="flex-1 bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden flex flex-col relative">
+
+                        {data.status === "select_theme" && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800/90 backdrop-blur-sm z-20">
+                                <h3 className="text-3xl font-bold mb-8">Choose a Category</h3>
+                                <div className="flex gap-4">
+                                    {["animal", "thing", "person"].map(t => (
+                                        <button key={t} onClick={() => socket.emit("g2_select_theme", { roomCode: room.code, theme: t })}
+                                            className="bg-violet-600 hover:bg-violet-500 px-8 py-4 rounded-xl text-xl font-bold capitalize transition shadow-lg shadow-violet-500/20">
+                                            {t}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {data.status === "rng_rolling" && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800/95 z-20">
+                                <div className="text-sm font-bold text-violet-400 uppercase tracking-widest mb-4">Selecting Drawer</div>
+                                <h1 className="text-6xl font-black text-white animate-bounce">{rngDisplay}</h1>
+                            </div>
+                        )}
+
+                        {data.status === "gameover" && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/95 z-30 p-8 text-center">
+                                <div className="text-6xl mb-6">{data.winner !== "none" ? "🎉" : "⏳"}</div>
+                                <h2 className="text-4xl font-black text-violet-400 mb-4">{data.reason}</h2>
+                                {data.winner !== "none" && <p className="text-xl text-slate-300 mb-8">Winner: <span className="text-white font-bold">{room.players.find(p => p.id === data.winner)?.name}</span></p>}
+                                <button onClick={() => socket.emit("return_lobby", room.code)} className="bg-violet-600 hover:bg-violet-500 px-8 py-3 rounded-xl font-bold transition">Play Again</button>
+                            </div>
+                        )}
+
+                        {/* Main Drawing Area Layout */}
+                        <div className="flex-1 flex flex-col lg:flex-row">
+
+                            {/* Canvas Area */}
+                            <div className="flex-1 p-6 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-slate-700 bg-slate-800/50">
+                                <div className="w-full max-w-[600px] mb-4 text-center">
+                                    {isDrawer ? (
+                                        <div className="bg-red-500/20 border border-red-500 text-red-300 py-3 px-6 rounded-xl font-medium text-lg inline-block">
+                                            Draw: <span className="font-black text-white uppercase tracking-wider">{data.word}</span>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-blue-500/20 border border-blue-500 text-blue-300 py-3 px-6 rounded-xl font-medium text-lg inline-block">
+                                            Guess what <span className="font-bold text-white">{drawerName}</span> is drawing!
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="bg-white p-2 rounded-xl shadow-inner relative w-full max-w-[600px] aspect-video">
+                                    {/* Overlay blocker for guesser */}
+                                    {!isDrawer && <div className="absolute inset-0 z-10" />}
+                                    <canvas
+                                        ref={canvasRef}
+                                        width={600}
+                                        height={337}
+                                        className={`w-full h-full bg-white rounded-lg ${isDrawer ? 'cursor-crosshair' : 'cursor-default'}`}
+                                        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseOut={onMouseUp}
+                                    />
+                                </div>
+
+                                {isDrawer && (
+                                    <button onClick={clearCanvas} className="mt-4 bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        Clear Canvas
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Chat / Guesses Area */}
+                            <div className="w-full lg:w-80 flex flex-col bg-slate-900/50">
+                                <div className="p-4 border-b border-slate-700 bg-slate-800 font-semibold text-slate-300">Live Guesses</div>
+                                <div className="flex-1 p-4 overflow-y-auto space-y-3">
+                                    {chatLog.length === 0 && <p className="text-slate-500 text-sm text-center italic mt-4">No guesses yet...</p>}
+                                    {chatLog.map((log, i) => (
+                                        <div key={i} className="text-sm">
+                                            <span className="font-bold text-violet-400">{log.name}: </span>
+                                            <span className="text-slate-300">{log.guess}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {!isDrawer && data.status === "drawing" && (
+                                    <div className="p-4 bg-slate-800 border-t border-slate-700">
+                                        <div className="flex gap-2">
+                                            <input
+                                                className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-violet-500 placeholder-slate-500 text-sm"
+                                                placeholder="Type guess..."
+                                                value={guessInput}
+                                                onChange={e => setGuessInput(e.target.value)}
+                                                onKeyDown={e => e.key === "Enter" && submitGuess()}
+                                            />
+                                            <button onClick={submitGuess} className="bg-violet-600 hover:bg-violet-500 px-4 py-2 rounded-lg text-sm font-bold transition">
+                                                Send
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                     </div>
                 </div>
-            )}
-
-            {data.status === "gameover" && (
-                <div style={{ textAlign: "center", padding: "20px", background: "#e6ffe6", borderRadius: "8px", marginTop: "20px" }}>
-                    <h2>Game Over!</h2>
-                    <h3 style={{ color: "#28a745" }}>{data.reason}</h3>
-                    {data.winner !== "none" && <p>Winner: <b>{room.players.find(p => p.id === data.winner)?.name}</b></p>}
-                    <button style={{ ...btnStyle, marginTop: "20px", background: "#0066cc" }} onClick={returnToLobby}>Back to Lobby</button>
-                </div>
-            )}
+            </div>
         </div>
     );
 }
