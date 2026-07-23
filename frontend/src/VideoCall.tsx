@@ -23,7 +23,7 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
     const [isVideoOff, setIsVideoOff] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
 
-    // Floating Widget Layout & Drag States
+    // Floating Widget Layout, Drag & Resizing States
     const [isMinimized, setIsMinimized] = useState(false);
     const [dockPosition, setDockPosition] = useState<"free" | "top-right" | "top-left" | "bottom-right">("top-right");
     const [position, setPosition] = useState<{ x: number; y: number }>({ x: 20, y: 20 });
@@ -180,17 +180,20 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
         const handleMouseMove = (e: MouseEvent) => {
             if (!isDragging) return;
             setPosition({
-                x: Math.max(10, Math.min(window.innerWidth - 260, e.clientX - dragOffset.current.x)),
-                y: Math.max(10, Math.min(window.innerHeight - 150, e.clientY - dragOffset.current.y)),
+                x: Math.max(10, Math.min(window.innerWidth - 180, e.clientX - dragOffset.current.x)),
+                y: Math.max(10, Math.min(window.innerHeight - 100, e.clientY - dragOffset.current.y)),
             });
         };
 
         const handleTouchMove = (e: TouchEvent) => {
             if (!isDragging) return;
+            // Prevent body/page scrolling while dragging on mobile devices
+            if (e.cancelable) e.preventDefault();
+
             const touch = e.touches[0];
             setPosition({
-                x: Math.max(10, Math.min(window.innerWidth - 260, touch.clientX - dragOffset.current.x)),
-                y: Math.max(10, Math.min(window.innerHeight - 150, touch.clientY - dragOffset.current.y)),
+                x: Math.max(10, Math.min(window.innerWidth - 180, touch.clientX - dragOffset.current.x)),
+                y: Math.max(10, Math.min(window.innerHeight - 100, touch.clientY - dragOffset.current.y)),
             });
         };
 
@@ -199,7 +202,8 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
         if (isDragging) {
             window.addEventListener("mousemove", handleMouseMove);
             window.addEventListener("mouseup", handleMouseUp);
-            window.addEventListener("touchmove", handleTouchMove);
+            // { passive: false } enables preventDefault() to block page scrolling on touchmove
+            window.addEventListener("touchmove", handleTouchMove, { passive: false });
             window.addEventListener("touchend", handleMouseUp);
         }
 
@@ -223,12 +227,17 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
             style={getPositionStyle()}
             className="fixed z-50 transition-shadow duration-200"
         >
-            <div className="bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden w-64 flex flex-col">
+            <div
+                className={`bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${isMinimized
+                        ? "w-64 resize-none"
+                        : "w-72 min-w-[220px] max-w-[90vw] min-h-[160px] max-h-[80vh] resize overflow-auto"
+                    }`}
+            >
                 {/* Drag Handle & Header Controls */}
                 <div
                     onMouseDown={handleMouseDown}
                     onTouchStart={handleTouchStart}
-                    className="cursor-grab active:cursor-grabbing bg-slate-900/80 px-3 py-2 flex items-center justify-between border-b border-slate-700/60 select-none"
+                    className="cursor-grab active:cursor-grabbing bg-slate-900/80 px-3 py-2 flex items-center justify-between border-b border-slate-700/60 select-none shrink-0"
                 >
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-400">⋮⋮</span>
@@ -258,24 +267,24 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                 </div>
 
                 {!isMinimized && (
-                    <div className="p-2 space-y-2">
+                    <div className="p-2 space-y-2 flex-1 flex flex-col min-h-0">
                         {/* Video Streams Grid */}
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 gap-2 flex-1 min-h-0">
                             {/* Remote Video */}
-                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 aspect-video">
+                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 h-full w-full flex items-center justify-center min-h-[90px]">
                                 <video
                                     ref={remoteVideoRef}
                                     autoPlay
                                     playsInline
                                     className="absolute inset-0 w-full h-full object-cover"
                                 />
-                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[90%]">
+                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[90%] z-10">
                                     {isConnected ? opponentName : "Connecting..."}
                                 </div>
                             </div>
 
                             {/* Local Video */}
-                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 aspect-video">
+                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 h-full w-full flex items-center justify-center min-h-[90px]">
                                 <video
                                     ref={localVideoRef}
                                     autoPlay
@@ -283,14 +292,14 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                                     muted
                                     className="absolute inset-0 w-full h-full object-cover -scale-x-100"
                                 />
-                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200">
+                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200 z-10">
                                     You
                                 </div>
                             </div>
                         </div>
 
                         {/* Control Buttons */}
-                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        <div className="grid grid-cols-2 gap-1.5 shrink-0 pt-1">
                             <button
                                 onClick={toggleAudio}
                                 className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
