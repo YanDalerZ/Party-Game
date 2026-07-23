@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { socket } from "./socket";
 import VideoCall from "./VideoCall";
 
@@ -19,66 +19,175 @@ interface Props {
     myId: string;
 }
 
+declare global {
+    interface Window {
+        YT: any;
+        onYouTubeIframeAPIReady: () => void;
+    }
+}
+
 export default function Cinema({ room, myId }: Props) {
     const [mode, setMode] = useState<"screenshare" | "embed">("embed");
     const [inputUrl, setInputUrl] = useState("");
-    const [embedUrl, setEmbedUrl] = useState("");
+    const [videoId, setVideoId] = useState<string | null>(null);
+
+    const playerRef = useRef<any>(null);
+    const isRemoteAction = useRef<boolean>(false);
 
     const opponent = room.players.find((p) => p.id !== myId);
     const opponentName = opponent ? opponent.name : "Waiting for opponent...";
 
-    // Helper to format YouTube and standard URLs into embeddable URLs
-    const formatEmbedUrl = (rawUrl: string): string => {
-        let url = rawUrl.trim();
-        if (!url) return "";
+    // Helper to extract YouTube Video ID
+    const extractYouTubeId = (url: string): string | null => {
+        const trimmed = url.trim();
+        if (!trimmed) return null;
 
-        // Format YouTube Watch or Short links to Embed format
-        if (url.includes("youtube.com/watch?v=")) {
-            const videoId = url.split("v=")[1]?.split("&")[0];
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1`;
-        }
-        if (url.includes("youtu.be/")) {
-            const videoId = url.split("youtu.be/")[1]?.split("?")[0];
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1`;
-        }
+        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const match = trimmed.match(regExp);
 
-        // Add https protocol if omitted
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "https://" + url;
-        }
-
-        return url;
+        return match && match[2].length === 11 ? match[2] : null;
     };
 
+    // Load YouTube Iframe API Script dynamically
     useEffect(() => {
-        // Socket listener for synchronized video updates across players
-        const handleCinemaUrlUpdate = (formattedUrl: string) => {
-            console.log("🎬 [Cinema] Received synchronized URL:", formattedUrl);
-            setEmbedUrl(formattedUrl);
-            setMode("embed");
+        if (!window.YT) {
+            const tag = document.createElement("script");
+            tag.src = "https://www.youtube.com/iframe_api";
+            const firstScriptTag = document.getElementsByTagName("script")[0];
+            firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+        }
+    }, []);
+
+    // Instantiate or reload YouTube Player when videoId changes
+    useEffect(() => {
+        if (!videoId) return;
+
+        const createPlayer = () => {
+            if (playerRef.current) {
+                playerRef.current.loadVideoById(videoId);
+                return;
+            }
+
+            playerRef.current = new window.YT.Player("youtube-player", {
+                height: "100%",
+                width: "100%",
+                videoId: videoId,
+                playerVars: {
+                    autoplay: 1,
+                    controls: 1,
+                    modestbranding: 1,
+                    rel: 0,
+                },
+                events: {
+                    onStateChange: handlePlayerStateChange,
+                },
+            });
+        };
+
+        if (window.YT && window.YT.Player) {
+            createPlayer();
+        } else {
+            window.onYouTubeIframeAPIReady = () => createPlayer();
+        }
+    }, [videoId]);
+
+    // Handle Local Video State Changes (Play, Pause, Seek)
+    const handlePlayerStateChange = (event: any) => {
+        if (!playerRef.current) return;
+
+        if (isRemoteAction.current) {
+            isRemoteAction.current = false;
+            return;
+        }
+
+        const currentTime = playerRef.current.getCurrentTime();
+        const playerState = event.data;
+
+        if (playerState === 1) {
+            socket.emit("cinema_sync_action", {
+                roomCode: room.code,
+                action: "play",
+                currentTime,
+            });
+        } else if (playerState === 2) {
+            socket.emit("cinema_sync_action", {
+                roomCode: room.code,
+                action: "pause",
+                currentTime,
+            });
+        }
+    };
+
+    // Socket Event Listeners (Receiving Sync Signals)
+    useEffect(() => {
+        const handleCinemaUrlUpdate = (rawUrl: string) => {
+            console.log("🎬 [Cinema] Received synchronized URL:", rawUrl);
+            const extractedId = extractYouTubeId(rawUrl);
+            if (extractedId) {
+                setVideoId(extractedId);
+                setMode("embed");
+            }
+        };
+
+        const handleSyncAction = ({ action, currentTime }: { action: "play" | "pause" | "seek"; currentTime: number }) => {
+            if (!playerRef.current) return;
+
+            console.log(`🎬 [Cinema Sync Action] ${action} at ${currentTime}s`);
+            isRemoteAction.current = true;
+
+            const timeDiff = Math.abs(playerRef.current.getCurrentTime() - currentTime);
+
+            if (timeDiff > 1.5) {
+                playerRef.current.seekTo(currentTime, true);
+            }
+
+            if (action === "play") {
+                playerRef.current.playVideo();
+            } else if (action === "pause") {
+                playerRef.current.pauseVideo();
+            }
         };
 
         socket.on("cinema_url_updated", handleCinemaUrlUpdate);
+        socket.on("cinema_sync_action", handleSyncAction);
 
         return () => {
             socket.off("cinema_url_updated", handleCinemaUrlUpdate);
+            socket.off("cinema_sync_action", handleSyncAction);
         };
-    }, []);
+    }, [room.code]);
 
     const handleLoadStream = () => {
         if (!inputUrl.trim()) return;
-        const formatted = formatEmbedUrl(inputUrl);
-        setEmbedUrl(formatted);
-        socket.emit("cinema_change_url", { roomCode: room.code, url: formatted });
+
+        const extractedId = extractYouTubeId(inputUrl);
+        if (extractedId) {
+            setVideoId(extractedId);
+            socket.emit("cinema_change_url", { roomCode: room.code, url: inputUrl });
+        } else {
+            alert("Please provide a valid YouTube video or stream link!");
+        }
     };
 
     return (
-        <div className="flex flex-col md:flex-row h-screen bg-slate-900 text-white overflow-hidden">
-            {/* Sidebar: Reusing VideoCall Component */}
-            <VideoCall roomCode={room.code} opponentName={opponentName} />
+        <div className="flex flex-col md:flex-row h-screen w-screen bg-slate-900 text-white overflow-hidden">
+            {/* Dedicated Visible Sidebar Container */}
+            <aside className="w-full md:w-80 lg:w-96 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 flex flex-col shrink-0 z-10 shadow-lg">
+                <div className="p-3 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Voice & Screen Call
+                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Live
+                    </span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3">
+                    <VideoCall roomCode={room.code} opponentName={opponentName} />
+                </div>
+            </aside>
 
             {/* Main Stage Area */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950">
+            <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950">
                 {/* Control Header Bar */}
                 <div className="p-4 bg-slate-800 border-b border-slate-700 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-md">
                     <div className="flex items-center gap-2">
@@ -127,7 +236,7 @@ export default function Cinema({ room, myId }: Props) {
                             </div>
                             <h2 className="text-xl font-bold text-slate-100">Screen Share Active</h2>
                             <p className="text-sm text-slate-400 max-w-md">
-                                Use the screen sharing controls on your WebRTC call panel on the sidebar to stream your screen or tab with audio directly to your partner.
+                                Use the screen sharing controls on your WebRTC call panel in the sidebar to stream your screen or tab with audio directly to your partner.
                             </p>
                             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-300 max-w-md text-left">
                                 💡 <strong>Pro Tip:</strong> When sharing anime or streaming sites, select <strong>"Tab Share"</strong> in your browser prompt and check <strong>"Share Tab Audio"</strong> for optimal audio sync!
@@ -142,7 +251,7 @@ export default function Cinema({ room, myId }: Props) {
                                     type="text"
                                     value={inputUrl}
                                     onChange={(e) => setInputUrl(e.target.value)}
-                                    placeholder="Paste YouTube or embeddable video URL (e.g., https://www.youtube.com/watch?v=...)..."
+                                    placeholder="Paste YouTube link (e.g., https://www.youtube.com/watch?v=...)..."
                                     className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
                                     onKeyDown={(e) => e.key === "Enter" && handleLoadStream()}
                                 />
@@ -156,16 +265,9 @@ export default function Cinema({ room, myId }: Props) {
 
                             {/* Stream Viewer Container */}
                             <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden relative shadow-2xl flex items-center justify-center">
-                                {embedUrl ? (
-                                    <iframe
-                                        src={embedUrl}
-                                        title="Embedded Stream"
-                                        className="w-full h-full border-0"
-                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                        allowFullScreen
-                                    />
-                                ) : (
-                                    <div className="text-center p-6 text-slate-500 flex flex-col items-center gap-2">
+                                <div id="youtube-player" className="w-full h-full" />
+                                {!videoId && (
+                                    <div className="absolute text-center p-6 text-slate-500 flex flex-col items-center gap-2 pointer-events-none">
                                         <div className="text-4xl">🍿</div>
                                         <p className="text-sm">No video loaded yet. Paste a link above to start watching together!</p>
                                     </div>
@@ -174,7 +276,7 @@ export default function Cinema({ room, myId }: Props) {
                         </div>
                     )}
                 </div>
-            </div>
+            </main>
         </div>
     );
 }

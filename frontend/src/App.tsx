@@ -3,6 +3,9 @@ import { socket } from "./socket";
 import GuessNumber from "./GuessNumber";
 import DrawGuess from "./DrawGuess";
 import Cinema from "./Cinema";
+import WordChain from "./WordChain";
+import BombDefusal from "./BombDefusal";
+import DetectiveCaricature from "./DetectiveCaricature";
 
 export interface Player { id: string; name: string; }
 export interface Room { code: string; players: Player[]; currentGame: string | null; gameData: any; }
@@ -39,13 +42,22 @@ export default function App() {
 
   const startGame = (gameId: string) => {
     if (room && room.players.length === 2) {
-      socket.emit("start_game", { roomCode: room.code, game: gameId });
+      if (gameId === "bomb") {
+        socket.emit("bomb_start", room.code);
+      } else if (gameId === "detective") {
+        socket.emit("detective_start", room.code);
+      } else {
+        socket.emit("start_game", { roomCode: room.code, game: gameId });
+      }
     }
   };
 
   if (room && room.currentGame === "guess_number") return <GuessNumber room={room} myId={socket.id || ''} />;
   if (room && room.currentGame === "draw_guess") return <DrawGuess room={room} myId={socket.id || ''} />;
   if (room && room.currentGame === "cinema") return <Cinema room={room} myId={socket.id || ''} />;
+  if (room && room.currentGame === "wordchain") return <WordChain room={room} myId={socket.id || ''} />;
+  if (room && room.currentGame === "bomb") return <BombDefusal room={room} myId={socket.id || ''} />;
+  if (room && room.currentGame === "detective") return <DetectiveCaricature room={room} myId={socket.id || ''} />;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white p-4">
@@ -136,23 +148,49 @@ export default function App() {
                 <div className="space-y-3">
                   <button
                     onClick={() => startGame("guess_number")}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-emerald-500/30 flex justify-between px-6 items-center"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-emerald-500/30 flex justify-between px-6 items-center"
                   >
                     <span>1️⃣ Guess The Number</span>
                     <span>→</span>
                   </button>
+
                   <button
                     onClick={() => startGame("draw_guess")}
-                    className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-violet-500/30 flex justify-between px-6 items-center"
+                    className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-violet-500/30 flex justify-between px-6 items-center"
                   >
                     <span>2️⃣ Draw & Guess</span>
                     <span>→</span>
                   </button>
+
                   <button
                     onClick={() => startGame("cinema")}
-                    className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-pink-500/30 flex justify-between px-6 items-center"
+                    className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-pink-500/30 flex justify-between px-6 items-center"
                   >
                     <span>3️⃣ Cinema 🍿</span>
+                    <span>→</span>
+                  </button>
+
+                  <button
+                    onClick={() => startGame("wordchain")}
+                    className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-amber-500/30 flex justify-between px-6 items-center"
+                  >
+                    <span>4️⃣ 7-Word Chain</span>
+                    <span>→</span>
+                  </button>
+
+                  <button
+                    onClick={() => startGame("bomb")}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-red-500/30 flex justify-between px-6 items-center"
+                  >
+                    <span>5️⃣ Bomb Defusal 💣</span>
+                    <span>→</span>
+                  </button>
+
+                  <button
+                    onClick={() => startGame("detective")}
+                    className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-cyan-500/30 flex justify-between px-6 items-center"
+                  >
+                    <span>6️⃣ Detective Caricature 🔍</span>
                     <span>→</span>
                   </button>
                 </div>
