@@ -1,16 +1,30 @@
 import { Server, Socket } from "socket.io";
 
 export function registerCinemaHandlers(io: Server, socket: Socket) {
-    // Change Video URL
+    // Sync Video URL
     socket.on("cinema_change_url", ({ roomCode, url }: { roomCode: string; url: string }) => {
-        console.log(`[CINEMA] URL changed in room ${roomCode} to: ${url}`);
         io.to(roomCode).emit("cinema_url_updated", url);
     });
 
-    // Synchronize Play, Pause, and Seek events
-    socket.on("cinema_sync_action", ({ roomCode, action, currentTime }: { roomCode: string; action: "play" | "pause" | "seek"; currentTime: number }) => {
-        console.log(`[CINEMA] Action: ${action} at ${currentTime}s in room ${roomCode}`);
-        // Broadcast to everyone ELSE in the room to prevent event feedback loops
+    // Sync Video Controls (Play, Pause, Seek)
+    socket.on("cinema_sync_action", ({ roomCode, action, currentTime }: { roomCode: string; action: string; currentTime: number }) => {
         socket.to(roomCode).emit("cinema_sync_action", { action, currentTime });
+    });
+
+    // WebRTC Screen Sharing Relay Events
+    socket.on("cinema_screen_offer", ({ roomCode, offer }) => {
+        socket.to(roomCode).emit("cinema_screen_offer", { offer });
+    });
+
+    socket.on("cinema_screen_answer", ({ roomCode, answer }) => {
+        socket.to(roomCode).emit("cinema_screen_answer", { answer });
+    });
+
+    socket.on("cinema_screen_ice", ({ roomCode, candidate }) => {
+        socket.to(roomCode).emit("cinema_screen_ice", { candidate });
+    });
+
+    socket.on("cinema_screen_stop", ({ roomCode }) => {
+        socket.to(roomCode).emit("cinema_screen_stop");
     });
 }
