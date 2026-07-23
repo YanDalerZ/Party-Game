@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
 
-const BOMB_PASSWORDS = ["REACT", "SOCKET", "NODEJS", "CYBER", "SNAKE"];
+const BOMB_PASSWORDS = ["REACT", "SOCET", "NODEJ", "CYBER", "SNAKE"];
 
 export function registerBombDefusalHandlers(io: Server, socket: Socket, rooms: Record<string, any>) {
     function sendBombUpdate(roomCode: string) {
