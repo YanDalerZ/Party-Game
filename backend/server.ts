@@ -2,9 +2,20 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 app.use(cors());
+
+// Resolve static dist path dynamically based on build output directory structure
+let frontendDist = path.resolve(__dirname, "../../frontend/dist");
+if (!fs.existsSync(frontendDist)) {
+    frontendDist = path.resolve(__dirname, "../frontend/dist");
+}
+
+console.log(`[STATIC SERVE] Serving frontend assets from: ${frontendDist}`);
+app.use(express.static(frontendDist));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -289,7 +300,17 @@ io.on("connection", (socket) => {
     });
 });
 
-const PORT = 3001;
+// Wildcard fallback to serve index.html for client-side routing
+app.get("*", (req, res) => {
+    const indexPath = path.join(frontendDist, "index.html");
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send(`Frontend assets not found at: ${frontendDist}`);
+    }
+});
+
+const PORT = Number(process.env.PORT) || 3001;
 server.listen(PORT, () => {
     console.log(`\n🚀 Server running at http://localhost:${PORT}\n`);
 });
