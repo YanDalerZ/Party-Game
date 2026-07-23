@@ -8,8 +8,19 @@ import BombDefusal from "./BombDefusal";
 import DetectiveCaricature from "./DetectiveCaricature";
 import VideoCall from "./VideoCall";
 
-export interface Player { id: string; name: string; }
-export interface Room { code: string; players: Player[]; currentGame: string | null; gameData: any; scores: Record<string, number>; }
+export interface Player {
+  id: string;
+  name: string;
+}
+
+export interface Room {
+  code: string;
+  players: Player[];
+  currentGame: string | null;
+  gameData: any;
+  scores: Record<string, number>;
+  globalScores: Record<string, number>;
+}
 
 export default function App() {
   const [name, setName] = useState("");
@@ -18,16 +29,21 @@ export default function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    socket.on("room_created", (r: Room) => { setRoom(r); setError(""); });
-    socket.on("room_updated", (r: Room) => { setRoom(r); setError(""); });
-    socket.on("game_started", (r: Room) => { setRoom(r); });
-    socket.on("error_message", (msg: string) => setError(msg));
+    const handleRoomCreated = (r: Room) => { setRoom(r); setError(""); };
+    const handleRoomUpdated = (r: Room) => { setRoom(r); setError(""); };
+    const handleGameStarted = (r: Room) => { setRoom(r); };
+    const handleErrorMessage = (msg: string) => setError(msg);
+
+    socket.on("room_created", handleRoomCreated);
+    socket.on("room_updated", handleRoomUpdated);
+    socket.on("game_started", handleGameStarted);
+    socket.on("error_message", handleErrorMessage);
 
     return () => {
-      socket.off("room_created");
-      socket.off("room_updated");
-      socket.off("game_started");
-      socket.off("error_message");
+      socket.off("room_created", handleRoomCreated);
+      socket.off("room_updated", handleRoomUpdated);
+      socket.off("game_started", handleGameStarted);
+      socket.off("error_message", handleErrorMessage);
     };
   }, []);
 
@@ -127,7 +143,6 @@ export default function App() {
                   {room.code}
                 </div>
 
-                {/* Scoreboard */}
                 {room.players.length === 2 && (
                   <div className="mb-6 bg-slate-900/50 p-4 rounded-xl border border-slate-600/50">
                     <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Overall Score</h3>
@@ -215,14 +230,12 @@ export default function App() {
 
   return (
     <div className="flex flex-col landscape:flex-row portrait:flex-col lg:flex-row min-h-screen lg:h-screen bg-slate-900 text-white overflow-x-hidden">
-      {/* Persistent Video Call Once 2 Players are inside */}
       {room && room.players.length === 2 && (
         <div className="w-full portrait:w-full landscape:w-72 lg:w-80 shrink-0 border-b portrait:border-b landscape:border-b-0 landscape:border-r lg:border-b-0 lg:border-r border-slate-700 bg-slate-800/40">
           <VideoCall roomCode={room.code} opponentName={opponent?.name || "Opponent"} />
         </div>
       )}
 
-      {/* Main App Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         {renderGameArea()}
       </div>

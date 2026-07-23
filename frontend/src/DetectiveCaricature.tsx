@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
 import VideoCall from "./VideoCall";
+import { type Room } from "./App";
 
 interface Props {
-    room: { code: string; players: { id: string; name: string }[] };
+    room: Room;
     myId: string;
 }
 
@@ -16,13 +17,13 @@ export default function DetectiveCaricature({ room, myId }: Props) {
     const opponentName = opponent ? opponent.name : "Opponent";
 
     useEffect(() => {
-        socket.emit("detective_start", room.code);
+        const handleDetectiveUpdated = (data: any) => setGameState(data);
+        socket.on("detective_updated", handleDetectiveUpdated);
 
-        socket.on("detective_updated", (data) => setGameState(data));
         return () => {
-            socket.off("detective_updated");
+            socket.off("detective_updated", handleDetectiveUpdated);
         };
-    }, [room.code]);
+    }, []);
 
     const handleEndGameWithScore = (success: boolean) => {
         socket.emit("detective_end", { roomCode: room.code, success });
@@ -151,7 +152,7 @@ export default function DetectiveCaricature({ room, myId }: Props) {
                                 onTouchStart={startDrawing}
                                 onTouchEnd={stopDrawing}
                                 onTouchMove={draw}
-                                className={`bg-slate-950 rounded-xl border border-slate-800 ${myRole === "artist" ? "cursor-crosshair bg-slate-900" : "pointer-events-none"}`}
+                                className={`bg-slate-950 rounded-xl border border-slate-800 touch-none ${myRole === "artist" ? "cursor-crosshair bg-slate-900" : "pointer-events-none"}`}
                             />
                         </div>
                     </div>

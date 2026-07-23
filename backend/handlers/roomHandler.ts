@@ -15,7 +15,8 @@ export function registerRoomHandlers(
             players: [{ id: socket.id, name: playerName }],
             currentGame: null,
             gameData: null,
-            scores: { [socket.id]: 0 } // Initialize scores
+            scores: { [socket.id]: 0 },
+            globalScores: { [socket.id]: 0 } // Initialize globalScores
         };
         socket.join(code);
         console.log(`[ROOM CREATED] Code: ${code} by ${playerName} (${socket.id})`);
@@ -38,6 +39,7 @@ export function registerRoomHandlers(
 
         room.players.push({ id: socket.id, name: playerName });
         room.scores[socket.id] = 0; // Initialize score for player 2
+        room.globalScores[socket.id] = 0; // Initialize globalScore for player 2
 
         socket.join(room.code);
         console.log(`[ROOM JOINED] ${playerName} (${socket.id}) joined ${room.code}`);

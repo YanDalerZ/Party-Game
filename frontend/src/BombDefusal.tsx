@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { socket } from "./socket";
 import VideoCall from "./VideoCall";
+import { type Room } from "./App";
 
 interface Props {
-    room: { code: string; players: { id: string; name: string }[] };
+    room: Room;
     myId: string;
 }
 
@@ -16,13 +17,13 @@ export default function BombDefusal({ room, myId }: Props) {
     const opponentName = opponent ? opponent.name : "Opponent";
 
     useEffect(() => {
-        socket.emit("bomb_start", room.code);
+        const handleBombUpdated = (data: any) => setGameState(data);
+        socket.on("bomb_updated", handleBombUpdated);
 
-        socket.on("bomb_updated", (data) => setGameState(data));
         return () => {
-            socket.off("bomb_updated");
+            socket.off("bomb_updated", handleBombUpdated);
         };
-    }, [room.code]);
+    }, []);
 
     const startNewGame = () => {
         socket.emit("bomb_start", room.code);
@@ -120,8 +121,7 @@ export default function BombDefusal({ room, myId }: Props) {
                                         key={idx}
                                         disabled={config.cutWires.includes(idx) || config.wiresDefused}
                                         onClick={() => handleWireCut(idx)}
-                                        className={`w-6 h-28 rounded-full border-2 transition ${config.cutWires.includes(idx) ? "bg-slate-800 border-slate-700 opacity-20" : `${wire} border-white/20 hover:scale-105`
-                                            }`}
+                                        className={`w-6 h-28 rounded-full border-2 transition ${config.cutWires.includes(idx) ? "bg-slate-800 border-slate-700 opacity-20" : `${wire} border-white/20 hover:scale-105`}`}
                                     />
                                 ))}
                             </div>

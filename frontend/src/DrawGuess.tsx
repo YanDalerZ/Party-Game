@@ -35,32 +35,31 @@ export default function DrawGuess({ room, myId }: Props) {
     const lastPos = useRef({ x: 0, y: 0 });
 
     useEffect(() => {
-        socket.on("g2_updated", (newData: any) => setData(newData));
-        socket.on("g2_timer", (t: number) => setTimer(t));
-        socket.on("g2_wrong_guess", (info: { id: string; guess: string }) => {
+        const handleG2Updated = (newData: any) => setData(newData);
+        const handleG2Timer = (t: number) => setTimer(t);
+        const handleG2WrongGuess = (info: { id: string; guess: string }) => {
             const p = room.players.find((x) => x.id === info.id);
             if (p) {
                 setChatLog((prev) => [...prev, { name: p.name, guess: info.guess }]);
             }
-        });
+        };
+        const handleG2DrawLine = ({ x0, y0, x1, y1, color, size, style }: { x0: number; y0: number; x1: number; y1: number; color?: string; size?: number; style?: LineStyle }) => {
+            drawLine(x0, y0, x1, y1, false, color, size, style);
+        };
+        const handleG2ClearCanvas = () => clearLocalCanvas();
 
-        socket.on(
-            "g2_draw_line",
-            ({ x0, y0, x1, y1, color, size, style }: { x0: number; y0: number; x1: number; y1: number; color?: string; size?: number; style?: LineStyle }) => {
-                drawLine(x0, y0, x1, y1, false, color, size, style);
-            }
-        );
-
-        socket.on("g2_clear_canvas", () => {
-            clearLocalCanvas();
-        });
+        socket.on("g2_updated", handleG2Updated);
+        socket.on("g2_timer", handleG2Timer);
+        socket.on("g2_wrong_guess", handleG2WrongGuess);
+        socket.on("g2_draw_line", handleG2DrawLine);
+        socket.on("g2_clear_canvas", handleG2ClearCanvas);
 
         return () => {
-            socket.off("g2_updated");
-            socket.off("g2_timer");
-            socket.off("g2_wrong_guess");
-            socket.off("g2_draw_line");
-            socket.off("g2_clear_canvas");
+            socket.off("g2_updated", handleG2Updated);
+            socket.off("g2_timer", handleG2Timer);
+            socket.off("g2_wrong_guess", handleG2WrongGuess);
+            socket.off("g2_draw_line", handleG2DrawLine);
+            socket.off("g2_clear_canvas", handleG2ClearCanvas);
         };
     }, [room.players]);
 
@@ -69,18 +68,18 @@ export default function DrawGuess({ room, myId }: Props) {
     }, [chatLog]);
 
     useEffect(() => {
-        if (data.status === "rng_rolling") {
+        if (data?.status === "rng_rolling") {
             let toggle = true;
             const interval = setInterval(() => {
                 setRngDisplay(toggle ? room.players[0].name : room.players[1].name);
                 toggle = !toggle;
             }, 150);
             return () => clearInterval(interval);
-        } else if (data.status === "select_theme") {
+        } else if (data?.status === "select_theme") {
             setChatLog([]);
             clearLocalCanvas();
         }
-    }, [data.status, room.players]);
+    }, [data?.status, room.players]);
 
     const clearLocalCanvas = () => {
         const canvas = canvasRef.current;
@@ -145,7 +144,7 @@ export default function DrawGuess({ room, myId }: Props) {
     };
 
     const startDrawing = (clientX: number, clientY: number) => {
-        if (data.status !== "drawing" || data.drawerId !== myId) return;
+        if (data?.status !== "drawing" || data?.drawerId !== myId) return;
         const coords = getCanvasCoordinates(clientX, clientY);
         if (!coords) return;
         isDrawing.current = true;
@@ -153,7 +152,7 @@ export default function DrawGuess({ room, myId }: Props) {
     };
 
     const moveDrawing = (clientX: number, clientY: number) => {
-        if (!isDrawing.current || data.status !== "drawing" || data.drawerId !== myId) return;
+        if (!isDrawing.current || data?.status !== "drawing" || data?.drawerId !== myId) return;
         const coords = getCanvasCoordinates(clientX, clientY);
         if (!coords) return;
 
@@ -175,7 +174,7 @@ export default function DrawGuess({ room, myId }: Props) {
     };
 
     const clearCanvas = () => {
-        if (data.drawerId === myId) {
+        if (data?.drawerId === myId) {
             socket.emit("g2_clear_canvas", room.code);
             clearLocalCanvas();
         }
@@ -187,13 +186,12 @@ export default function DrawGuess({ room, myId }: Props) {
         setGuessInput("");
     };
 
-    const isDrawer = data.drawerId === myId;
-    const drawerName = room.players.find((p) => p.id === data.drawerId)?.name;
+    const isDrawer = data?.drawerId === myId;
+    const drawerName = room.players.find((p) => p.id === data?.drawerId)?.name;
 
     return (
         <div className="flex-1 flex flex-col min-w-0 p-3 sm:p-6 lg:p-8 overflow-y-auto">
             <div className="max-w-5xl mx-auto w-full flex flex-col flex-1 gap-4">
-                {/* Header Bar */}
                 <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-3 bg-slate-800 p-4 sm:p-6 rounded-xl sm:rounded-2xl shadow-lg border border-slate-700 shrink-0">
                     <div>
                         <h2 className="text-xl sm:text-3xl font-bold text-violet-400">
@@ -210,7 +208,7 @@ export default function DrawGuess({ room, myId }: Props) {
                             <span className="text-slate-500 mx-2">|</span>
                             <span className="text-pink-400">{room.players[1].name}: {room.scores[room.players[1].id] || 0}</span>
                         </div>
-                        {data.status === "drawing" && (
+                        {data?.status === "drawing" && (
                             <div className={`text-2xl sm:text-4xl font-black ${timer <= 10 ? "text-red-500 animate-pulse" : "text-white"}`}>
                                 {timer}s
                             </div>
@@ -224,10 +222,8 @@ export default function DrawGuess({ room, myId }: Props) {
                     </div>
                 </div>
 
-                {/* Canvas & Interactive Card */}
                 <div className="flex-1 bg-slate-800 rounded-xl sm:rounded-2xl border border-slate-700 shadow-xl overflow-hidden flex flex-col relative min-h-[450px]">
-                    {/* Category Select Modal */}
-                    {data.status === "select_theme" && (
+                    {data?.status === "select_theme" && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800/95 backdrop-blur-sm z-20 p-4 text-center">
                             <h3 className="text-2xl sm:text-3xl font-bold mb-6 sm:mb-8">
                                 Choose a Category
@@ -251,8 +247,7 @@ export default function DrawGuess({ room, myId }: Props) {
                         </div>
                     )}
 
-                    {/* RNG Drawer Rolling Modal */}
-                    {data.status === "rng_rolling" && (
+                    {data?.status === "rng_rolling" && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800/95 z-20 p-4">
                             <div className="text-xs sm:text-sm font-bold text-violet-400 uppercase tracking-widest mb-2 sm:mb-4">
                                 Selecting Drawer
@@ -263,20 +258,19 @@ export default function DrawGuess({ room, myId }: Props) {
                         </div>
                     )}
 
-                    {/* Game Over Screen */}
-                    {data.status === "gameover" && (
+                    {data?.status === "gameover" && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/95 z-30 p-6 text-center">
                             <div className="text-5xl sm:text-6xl mb-4 sm:mb-6">
-                                {data.winner !== "none" ? "🎉" : "⏳"}
+                                {data?.winner !== "none" ? "🎉" : "⏳"}
                             </div>
                             <h2 className="text-2xl sm:text-4xl font-black text-violet-400 mb-2 sm:mb-4">
-                                {data.reason}
+                                {data?.reason}
                             </h2>
-                            {data.winner !== "none" && (
+                            {data?.winner !== "none" && (
                                 <p className="text-lg sm:text-xl text-slate-300 mb-6 sm:mb-8">
                                     Winner:{" "}
                                     <span className="text-white font-bold">
-                                        {room.players.find((p) => p.id === data.winner)?.name}
+                                        {room.players.find((p) => p.id === data?.winner)?.name}
                                     </span>
                                 </p>
                             )}
@@ -297,16 +291,14 @@ export default function DrawGuess({ room, myId }: Props) {
                         </div>
                     )}
 
-                    {/* Workspace */}
                     <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-                        {/* Canvas Container */}
                         <div className="flex-1 p-3 sm:p-6 flex flex-col items-center justify-start lg:justify-center border-b lg:border-b-0 lg:border-r border-slate-700 bg-slate-800/50">
                             <div className="w-full max-w-[600px] mb-3 text-center">
                                 {isDrawer ? (
                                     <div className="bg-red-500/20 border border-red-500 text-red-300 py-2 sm:py-3 px-4 sm:px-6 rounded-xl font-medium text-sm sm:text-lg inline-block w-full sm:w-auto">
                                         Draw:{" "}
                                         <span className="font-black text-white uppercase tracking-wider">
-                                            {data.word}
+                                            {data?.word}
                                         </span>
                                     </div>
                                 ) : (
@@ -324,8 +316,7 @@ export default function DrawGuess({ room, myId }: Props) {
                                     ref={canvasRef}
                                     width={600}
                                     height={337}
-                                    className={`w-full h-full bg-white rounded-lg ${isDrawer ? "cursor-crosshair" : "cursor-default"
-                                        }`}
+                                    className={`w-full h-full bg-white rounded-lg ${isDrawer ? "cursor-crosshair" : "cursor-default"}`}
                                     onMouseDown={handleMouseDown}
                                     onMouseMove={handleMouseMove}
                                     onMouseUp={stopDrawing}
@@ -336,7 +327,6 @@ export default function DrawGuess({ room, myId }: Props) {
                                 />
                             </div>
 
-                            {/* Drawing Toolbar controls */}
                             {isDrawer && (
                                 <div className="w-full max-w-[600px] mt-3 sm:mt-4 flex flex-col gap-3 bg-slate-900/80 p-3 rounded-xl border border-slate-700">
                                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -411,7 +401,6 @@ export default function DrawGuess({ room, myId }: Props) {
                             )}
                         </div>
 
-                        {/* Chat & Live Guesses Panel */}
                         <div className="w-full lg:w-80 flex flex-col bg-slate-900/50 h-64 lg:h-auto min-h-[200px]">
                             <div className="p-3 sm:p-4 border-b border-slate-700 bg-slate-800 font-semibold text-slate-300 text-xs sm:text-sm">
                                 Live Guesses
@@ -432,7 +421,7 @@ export default function DrawGuess({ room, myId }: Props) {
                                 <div ref={chatEndRef} />
                             </div>
 
-                            {!isDrawer && data.status === "drawing" && (
+                            {!isDrawer && data?.status === "drawing" && (
                                 <div className="p-2 sm:p-4 bg-slate-800 border-t border-slate-700">
                                     <div className="flex gap-2">
                                         <input

@@ -8,5 +8,6 @@ export interface Room {
     players: Player[];
     currentGame: string | null;
     gameData: any;
-    scores: any;
+    scores: Record<string, number>;
+    globalScores: Record<string, number>;
 }

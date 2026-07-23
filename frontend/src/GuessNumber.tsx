@@ -18,9 +18,11 @@ export default function GuessNumber({ room, myId }: Props) {
     const [guessInput, setGuessInput] = useState("");
 
     useEffect(() => {
-        socket.on("g1_updated", (newData: any) => setData(newData));
+        const handleG1Updated = (newData: any) => setData(newData);
+        socket.on("g1_updated", handleG1Updated);
+
         return () => {
-            socket.off("g1_updated");
+            socket.off("g1_updated", handleG1Updated);
         };
     }, []);
 
@@ -60,7 +62,6 @@ export default function GuessNumber({ room, myId }: Props) {
     return (
         <div className="flex-1 p-4 sm:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto">
-                {/* Header Bar */}
                 <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-3 bg-slate-800 p-4 sm:p-6 rounded-xl sm:rounded-2xl shadow-lg border border-slate-700 mb-6 sm:mb-8">
                     <div>
                         <h2 className="text-xl sm:text-3xl font-bold text-blue-400">
@@ -86,7 +87,6 @@ export default function GuessNumber({ room, myId }: Props) {
                     </div>
                 </div>
 
-                {/* Setup Stage */}
                 {data?.status === "setup" && (
                     <div className="bg-slate-800 p-6 sm:p-8 rounded-xl sm:rounded-2xl border border-slate-700 text-center shadow-xl">
                         <h3 className="text-xl sm:text-2xl font-semibold mb-4 sm:mb-6">
@@ -130,7 +130,6 @@ export default function GuessNumber({ room, myId }: Props) {
                     </div>
                 )}
 
-                {/* Playing Stage */}
                 {data?.status === "playing" && (
                     <div className="space-y-4 sm:space-y-6">
                         <div className="bg-slate-800 p-6 sm:p-8 rounded-xl sm:rounded-2xl border border-slate-700 text-center flex flex-col items-center shadow-xl">
@@ -163,7 +162,6 @@ export default function GuessNumber({ room, myId }: Props) {
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                            {/* My Guesses Log */}
                             <div className="bg-slate-800 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-700 shadow-xl">
                                 <h4 className="font-semibold text-blue-300 mb-3 sm:mb-4 text-sm sm:text-base">
                                     Your Guesses
@@ -185,7 +183,6 @@ export default function GuessNumber({ room, myId }: Props) {
                                 </div>
                             </div>
 
-                            {/* Opponent Guesses Log */}
                             <div className="bg-slate-800 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-700 shadow-xl">
                                 <h4 className="font-semibold text-pink-300 mb-3 sm:mb-4 text-sm sm:text-base">
                                     Opponent's Guesses
@@ -210,7 +207,6 @@ export default function GuessNumber({ room, myId }: Props) {
                     </div>
                 )}
 
-                {/* Game Over Stage */}
                 {data?.status === "gameover" && (
                     <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 sm:p-10 rounded-xl sm:rounded-2xl border border-emerald-500/30 text-center shadow-2xl mt-4 sm:mt-8">
                         <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">🏆</div>
