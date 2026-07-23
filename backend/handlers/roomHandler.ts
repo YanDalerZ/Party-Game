@@ -15,6 +15,7 @@ export function registerRoomHandlers(
             players: [{ id: socket.id, name: playerName }],
             currentGame: null,
             gameData: null,
+            scores: { [socket.id]: 0 } // Initialize scores
         };
         socket.join(code);
         console.log(`[ROOM CREATED] Code: ${code} by ${playerName} (${socket.id})`);
@@ -36,9 +37,27 @@ export function registerRoomHandlers(
         }
 
         room.players.push({ id: socket.id, name: playerName });
+        room.scores[socket.id] = 0; // Initialize score for player 2
+
         socket.join(room.code);
         console.log(`[ROOM JOINED] ${playerName} (${socket.id}) joined ${room.code}`);
         io.to(room.code).emit("room_updated", room);
+    });
+
+    // Start Game
+    socket.on("start_game", ({ roomCode, game }: { roomCode: string; game: string }) => {
+        const room = rooms[roomCode];
+        if (room) {
+            room.currentGame = game;
+
+            if (game === "guess_number") {
+                room.gameData = { status: "setup", p1Secret: null, p2Secret: null, p1Guesses: [], p2Guesses: [] };
+            } else if (game === "draw_guess") {
+                room.gameData = { status: "select_theme", theme: null, word: null, drawerId: null, winner: null, reason: null };
+            }
+
+            io.to(roomCode).emit("game_started", room);
+        }
     });
 
     // Return to Lobby

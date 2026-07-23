@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
 import VideoCall from "./VideoCall";
 
@@ -10,45 +10,76 @@ interface Props {
 export default function DetectiveCaricature({ room, myId }: Props) {
     const [gameState, setGameState] = useState<any>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const [isDrawing, setIsDrawing] = useState(false);
+    const isDrawingRef = useRef(false);
 
     const opponent = room.players.find((p) => p.id !== myId);
     const opponentName = opponent ? opponent.name : "Opponent";
 
     useEffect(() => {
+        socket.emit("detective_start", room.code);
+
         socket.on("detective_updated", (data) => setGameState(data));
         return () => {
             socket.off("detective_updated");
         };
-    }, []);
+    }, [room.code]);
 
-    const handleStartGame = () => {
-        socket.emit("detective_start", room.code);
+    const handleEndGameWithScore = (success: boolean) => {
+        socket.emit("detective_end", { roomCode: room.code, success });
     };
 
-    const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        if (!canvasRef.current) return { x: 0, y: 0 };
+        const rect = canvasRef.current.getBoundingClientRect();
+
+        let clientX = 0;
+        let clientY = 0;
+
+        if ("touches" in e) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        return {
+            x: clientX - rect.left,
+            y: clientY - rect.top,
+        };
+    };
+
+    const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         if (!gameState || gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
-        setIsDrawing(true);
-        draw(e);
+        isDrawingRef.current = true;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const { x, y } = getCanvasCoordinates(e);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
     };
 
     const stopDrawing = () => {
-        setIsDrawing(false);
+        if (!isDrawingRef.current) return;
+        isDrawingRef.current = false;
+
         if (canvasRef.current) {
             const dataUrl = canvasRef.current.toDataURL();
             socket.emit("detective_sync_canvas", { roomCode: room.code, canvasData: dataUrl });
         }
     };
 
-    const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!isDrawing || !canvasRef.current) return;
+    const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+        if (!isDrawingRef.current || !canvasRef.current) return;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const { x, y } = getCanvasCoordinates(e);
 
         ctx.lineWidth = 3;
         ctx.lineCap = "round";
@@ -56,20 +87,13 @@ export default function DetectiveCaricature({ room, myId }: Props) {
 
         ctx.lineTo(x, y);
         ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y);
     };
 
     if (!gameState) {
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
                 <h1 className="text-3xl font-black mb-4">🕵️‍♂️ Detective Caricature</h1>
-                <p className="text-slate-400 text-sm mb-6 max-w-md text-center">
-                    One player describes a suspect's face while the other draws it blind without seeing the photo in 60 seconds!
-                </p>
-                <button onClick={handleStartGame} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-3 rounded-xl transition">
-                    Randomize Roles & Start 🚀
-                </button>
+                <div className="animate-spin text-4xl mt-4">⏳</div>
             </div>
         );
     }
@@ -78,8 +102,13 @@ export default function DetectiveCaricature({ room, myId }: Props) {
 
     return (
         <div className="flex flex-col md:flex-row h-screen bg-slate-950 text-white overflow-hidden">
-            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0">
+            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0 flex flex-col">
                 <VideoCall roomCode={room.code} opponentName={opponentName} />
+                <div className="p-4 mt-auto">
+                    <button onClick={() => socket.emit("return_lobby", room.code)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl transition text-sm">
+                        Exit to Lobby
+                    </button>
+                </div>
             </div>
 
             <div className="flex-1 flex flex-col p-4 overflow-y-auto">
@@ -98,7 +127,6 @@ export default function DetectiveCaricature({ room, myId }: Props) {
 
                 {gameStatus === "playing" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-                        {/* Left side: Suspect photo (Only visible to describer) */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center justify-center">
                             <h2 className="text-xs font-bold text-slate-400 mb-3 uppercase">Suspect Target Photo</h2>
                             {myRole === "describer" ? (
@@ -110,7 +138,6 @@ export default function DetectiveCaricature({ room, myId }: Props) {
                             )}
                         </div>
 
-                        {/* Right side: Drawing Canvas */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center justify-center">
                             <h2 className="text-xs font-bold text-slate-400 mb-3 uppercase">Caricature Sketch Board</h2>
                             <canvas
@@ -119,8 +146,12 @@ export default function DetectiveCaricature({ room, myId }: Props) {
                                 height={320}
                                 onMouseDown={startDrawing}
                                 onMouseUp={stopDrawing}
+                                onMouseLeave={stopDrawing}
                                 onMouseMove={draw}
-                                className={`bg-slate-950 rounded-xl border border-slate-800 ${myRole === "artist" ? "cursor-crosshair" : "pointer-events-none"}`}
+                                onTouchStart={startDrawing}
+                                onTouchEnd={stopDrawing}
+                                onTouchMove={draw}
+                                className={`bg-slate-950 rounded-xl border border-slate-800 ${myRole === "artist" ? "cursor-crosshair bg-slate-900" : "pointer-events-none"}`}
                             />
                         </div>
                     </div>
@@ -132,16 +163,22 @@ export default function DetectiveCaricature({ room, myId }: Props) {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl w-full mb-6">
                             <div className="text-center">
                                 <span className="text-xs font-bold text-slate-400 block mb-2">ORIGINAL SUSPECT</span>
-                                <img src={suspectImage} className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl" />
+                                <img src={suspectImage} alt="Original Suspect" className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl" />
                             </div>
                             <div className="text-center">
                                 <span className="text-xs font-bold text-slate-400 block mb-2">ARTIST SKETCH</span>
-                                <img src={finalCanvas || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="} className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl bg-slate-950" />
+                                <img src={finalCanvas || "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="} alt="Artist Sketch" className="w-full h-64 rounded-xl object-cover border border-slate-700 shadow-xl bg-slate-950" />
                             </div>
                         </div>
-                        <button onClick={handleStartGame} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-3 rounded-xl transition">
-                            Next Round 🔄
-                        </button>
+
+                        <div className="flex gap-4">
+                            <button onClick={() => handleEndGameWithScore(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-xl transition">
+                                Good Match! (+5 pts)
+                            </button>
+                            <button onClick={() => handleEndGameWithScore(false)} className="bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-xl transition">
+                                Terrible Match (0 pts)
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>

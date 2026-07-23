@@ -16,11 +16,13 @@ export default function BombDefusal({ room, myId }: Props) {
     const opponentName = opponent ? opponent.name : "Opponent";
 
     useEffect(() => {
+        socket.emit("bomb_start", room.code);
+
         socket.on("bomb_updated", (data) => setGameState(data));
         return () => {
             socket.off("bomb_updated");
         };
-    }, []);
+    }, [room.code]);
 
     const startNewGame = () => {
         socket.emit("bomb_start", room.code);
@@ -54,9 +56,7 @@ export default function BombDefusal({ room, myId }: Props) {
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
                 <h1 className="text-3xl font-black mb-4">🧨 Bomb Defusal Co-Op</h1>
-                <button onClick={startNewGame} className="bg-red-600 hover:bg-red-500 text-white font-bold px-6 py-3 rounded-xl transition">
-                    Initialize Bomb Protocol 💣
-                </button>
+                <div className="animate-spin text-4xl mt-4">⏳</div>
             </div>
         );
     }
@@ -65,8 +65,13 @@ export default function BombDefusal({ room, myId }: Props) {
 
     return (
         <div className="flex flex-col md:flex-row h-screen bg-slate-950 text-white overflow-hidden">
-            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0">
+            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0 flex flex-col">
                 <VideoCall roomCode={room.code} opponentName={opponentName} />
+                <div className="p-4 mt-auto">
+                    <button onClick={() => socket.emit("return_lobby", room.code)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl transition text-sm">
+                        Exit to Lobby
+                    </button>
+                </div>
             </div>
 
             <div className="flex-1 flex flex-col p-4 overflow-y-auto">
@@ -94,7 +99,7 @@ export default function BombDefusal({ room, myId }: Props) {
                 {gameStatus === "gameover" && (
                     <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
                         <h2 className={`text-3xl font-black mb-2 ${gameState.winner ? "text-emerald-400" : "text-red-500"}`}>
-                            {gameState.winner ? "🎉 BOMB DEFUSED SUCCESSFULLY!" : "💥 BOOM! BOMB EXPLODED!"}
+                            {gameState.winner ? "🎉 BOMB DEFUSED SUCCESSFULLY! (+10 pts each)" : "💥 BOOM! BOMB EXPLODED!"}
                         </h2>
                         <button onClick={startNewGame} className="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-2.5 rounded-xl transition">
                             Play Again 🔄
@@ -104,7 +109,6 @@ export default function BombDefusal({ room, myId }: Props) {
 
                 {gameStatus === "playing" && role === "defuser" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-                        {/* Module 1: Wires */}
                         <div className={`p-4 bg-slate-900 border rounded-2xl ${config.wiresDefused ? "border-emerald-500/50" : "border-slate-800"}`}>
                             <div className="flex justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-400">MODULE 1: WIRES</span>
@@ -123,7 +127,6 @@ export default function BombDefusal({ room, myId }: Props) {
                             </div>
                         </div>
 
-                        {/* Module 2: Keypad */}
                         <div className={`p-4 bg-slate-900 border rounded-2xl ${config.keypadDefused ? "border-emerald-500/50" : "border-slate-800"}`}>
                             <div className="flex justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-400">MODULE 2: KEYPAD CODE</span>
@@ -143,7 +146,6 @@ export default function BombDefusal({ room, myId }: Props) {
                             </div>
                         </div>
 
-                        {/* Module 3: Password */}
                         <div className={`p-4 bg-slate-900 border rounded-2xl ${config.passwordDefused ? "border-emerald-500/50" : "border-slate-800"}`}>
                             <div className="flex justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-400">MODULE 3: DECRYPTOR</span>
@@ -164,7 +166,6 @@ export default function BombDefusal({ room, myId }: Props) {
                             </div>
                         </div>
 
-                        {/* Module 4: Big Button */}
                         <div className={`p-4 bg-slate-900 border rounded-2xl ${config.buttonDefused ? "border-emerald-500/50" : "border-slate-800"} flex flex-col justify-between`}>
                             <div className="flex justify-between mb-2">
                                 <span className="text-xs font-bold text-slate-400">MODULE 4: POWER BUTTON</span>

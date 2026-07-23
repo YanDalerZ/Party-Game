@@ -50,6 +50,7 @@ export function registerDrawGuessHandlers(
                         rooms[roomCode].gameData.winner = "none";
                         rooms[roomCode].gameData.reason = `Time's up! The word was "${chosenWord}".`;
                         io.to(roomCode).emit("g2_updated", rooms[roomCode].gameData);
+                        io.to(roomCode).emit("room_updated", rooms[roomCode]); // Update scoreboard just in case
                     }
                 }
             }, 1000);
@@ -75,11 +76,32 @@ export function registerDrawGuessHandlers(
             stopRoomTimer(roomCode);
             room.gameData.status = "gameover";
             room.gameData.winner = socket.id;
+
+            // Add a point to the winner
+            room.scores[socket.id] = (room.scores[socket.id] || 0) + 1;
+
             const winnerName = room.players.find((p) => p.id === socket.id)?.name;
             room.gameData.reason = `${winnerName} guessed the word "${room.gameData.word}" correctly!`;
+
             io.to(roomCode).emit("g2_updated", room.gameData);
+            io.to(roomCode).emit("room_updated", room); // Broadcast new scores
         } else {
             io.to(roomCode).emit("g2_wrong_guess", { id: socket.id, guess });
         }
+    });
+
+    socket.on("g2_play_again", (roomCode: string) => {
+        const room = rooms[roomCode];
+        if (!room || room.currentGame !== "draw_guess") return;
+
+        room.gameData = {
+            status: "select_theme",
+            theme: null,
+            word: null,
+            drawerId: null,
+            winner: null,
+            reason: null
+        };
+        io.to(roomCode).emit("g2_updated", room.gameData);
     });
 }

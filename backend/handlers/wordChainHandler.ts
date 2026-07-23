@@ -1,23 +1,27 @@
 import { Server, Socket } from "socket.io";
-import { Room } from "./types";
 
-export function registerWordChainHandlers(io: Server, socket: Socket, rooms: Record<string, Room>) {
-    socket.on("wordchain_submit_chain", ({ roomCode, playerId, chain }: { roomCode: string; playerId: string; chain: string[] }) => {
+export function registerWordChainHandlers(io: Server, socket: Socket, rooms: Record<string, any>) {
+    socket.on("wordchain_start", (roomCode: string) => {
         const room = rooms[roomCode];
         if (!room) return;
 
-        if (!room.gameData || room.currentGame !== "wordchain") {
-            room.currentGame = "wordchain";
-            room.gameData = {
-                playerChains: {},
-                chainsToGuess: {},
-                playerProgress: {},
-                scores: {},
-                currentTurn: room.players[0].id,
-                gameStatus: "setup",
-                winner: null,
-            };
-        }
+        room.currentGame = "wordchain";
+        room.gameData = {
+            playerChains: {},
+            chainsToGuess: {},
+            playerProgress: {},
+            scores: {},
+            currentTurn: room.players[0].id,
+            gameStatus: "setup",
+            winner: null,
+        };
+
+        io.to(roomCode).emit("wordchain_updated", room.gameData);
+    });
+
+    socket.on("wordchain_submit_chain", ({ roomCode, playerId, chain }: { roomCode: string; playerId: string; chain: string[] }) => {
+        const room = rooms[roomCode];
+        if (!room || room.currentGame !== "wordchain") return;
 
         const data = room.gameData;
         data.playerChains[playerId] = chain;
@@ -86,9 +90,14 @@ export function registerWordChainHandlers(io: Server, socket: Socket, rooms: Rec
                     if (p1Score > p2Score) data.winner = room.players[0].id;
                     else if (p2Score > p1Score) data.winner = room.players[1]?.id;
                     else data.winner = "draw";
+
+                    if (data.winner && data.winner !== "draw") {
+                        room.globalScores[data.winner] = (room.globalScores[data.winner] || 0) + 20;
+                        io.to(roomCode).emit("room_updated", room);
+                    }
                 }
             } else {
-                const opponent = room.players.find((p) => p.id !== playerId);
+                const opponent = room.players.find((p: any) => p.id !== playerId);
                 if (opponent) {
                     data.currentTurn = opponent.id;
                 }
@@ -107,7 +116,7 @@ export function registerWordChainHandlers(io: Server, socket: Socket, rooms: Rec
 
         progress.hintsRevealed[targetIndex] = (progress.hintsRevealed[targetIndex] || 1) + 1;
 
-        const opponent = room.players.find((p) => p.id !== playerId);
+        const opponent = room.players.find((p: any) => p.id !== playerId);
         if (opponent) {
             data.currentTurn = opponent.id;
         }

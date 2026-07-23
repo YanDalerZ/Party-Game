@@ -12,6 +12,7 @@ interface Room {
     players: Player[];
     currentGame: string | null;
     gameData: any;
+    globalScores: Record<string, number>;
 }
 
 interface Props {
@@ -37,6 +38,8 @@ export default function WordChain({ room, myId }: Props) {
     const isMyTurn = currentTurn === myId;
 
     useEffect(() => {
+        socket.emit("wordchain_start", room.code);
+
         const handleWordChainUpdated = (data: any) => {
             if (data.gameStatus) setGameStatus(data.gameStatus);
             if (data.currentTurn) setCurrentTurn(data.currentTurn);
@@ -45,14 +48,15 @@ export default function WordChain({ room, myId }: Props) {
 
             if (data.playerChains && data.playerChains[myId]) {
                 setHasSubmittedChain(true);
+            } else {
+                setHasSubmittedChain(false);
+                setMyCreatedChain(Array(7).fill(""));
             }
 
-            // Load the chain that THIS player is supposed to guess (the OPPONENT'S chain)
             if (data.chainsToGuess && data.chainsToGuess[myId]) {
                 setTargetChain(data.chainsToGuess[myId]);
             }
 
-            // Load player-specific guessing progress
             if (data.playerProgress && data.playerProgress[myId]) {
                 const progress = data.playerProgress[myId];
                 setGuesses(progress.guesses);
@@ -66,9 +70,8 @@ export default function WordChain({ room, myId }: Props) {
         return () => {
             socket.off("wordchain_updated", handleWordChainUpdated);
         };
-    }, [myId]);
+    }, [myId, room.code]);
 
-    // Submit player's own 7-word chain
     const handleSubmitChain = () => {
         if (myCreatedChain.some((w) => !w.trim())) {
             alert("Please fill out all 7 words before submitting!");
@@ -81,11 +84,8 @@ export default function WordChain({ room, myId }: Props) {
             playerId: myId,
             chain: formattedChain,
         });
-
-        setHasSubmittedChain(true);
     };
 
-    // Submit a guess for the current target word
     const handleGuessSubmit = () => {
         if (!isMyTurn || !guessInput.trim() || gameStatus !== "playing") return;
 
@@ -103,7 +103,6 @@ export default function WordChain({ room, myId }: Props) {
         setGuessInput("");
     };
 
-    // Request a hint (reveals 1 extra letter, skips turn)
     const handleRequestHint = () => {
         if (!isMyTurn || gameStatus !== "playing") return;
 
@@ -122,7 +121,6 @@ export default function WordChain({ room, myId }: Props) {
         });
     };
 
-    // Render revealed letters / underscores
     const renderWordSlot = (word: string, index: number) => {
         if (guesses[index]) {
             return <span className="text-emerald-400 font-black tracking-widest">{guesses[index]}</span>;
@@ -145,14 +143,16 @@ export default function WordChain({ room, myId }: Props) {
 
     return (
         <div className="flex flex-col md:flex-row h-screen bg-slate-900 text-white overflow-hidden">
-            {/* Video Call Sidebar */}
-            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0">
+            <div className="w-full md:w-80 h-64 md:h-full border-b md:border-b-0 md:border-r border-slate-800 shrink-0 flex flex-col">
                 <VideoCall roomCode={room.code} opponentName={opponentName} />
+                <div className="p-4 mt-auto">
+                    <button onClick={() => socket.emit("return_lobby", room.code)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl transition text-sm">
+                        Exit to Lobby
+                    </button>
+                </div>
             </div>
 
-            {/* Main Game Stage */}
             <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950 p-4">
-                {/* Header */}
                 <div className="p-4 bg-slate-800 border border-slate-700 rounded-2xl flex items-center justify-between shadow-md mb-4 shrink-0">
                     <div className="flex items-center gap-2">
                         <span className="text-2xl">🔗</span>
@@ -161,16 +161,8 @@ export default function WordChain({ room, myId }: Props) {
                             <p className="text-xs text-slate-400">Guess each other's 7-word chain!</p>
                         </div>
                     </div>
-
-                    <button
-                        onClick={() => socket.emit("return_lobby", room.code)}
-                        className="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-200 transition"
-                    >
-                        Exit to Lobby
-                    </button>
                 </div>
 
-                {/* SETUP SCREEN (Both players type their own word chain) */}
                 {gameStatus === "setup" && (
                     <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
                         <div className="max-w-xl w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-xl flex flex-col gap-6">
@@ -218,10 +210,8 @@ export default function WordChain({ room, myId }: Props) {
                     </div>
                 )}
 
-                {/* PLAYING SCREEN */}
                 {gameStatus === "playing" && (
                     <div className="flex-1 flex flex-col items-center justify-between gap-4 overflow-hidden max-w-2xl mx-auto w-full">
-                        {/* Turn & Score Header */}
                         <div className="w-full flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-md">
                             <div className="flex items-center gap-2">
                                 <span className={`w-3 h-3 rounded-full ${isMyTurn ? "bg-emerald-400 animate-ping" : "bg-slate-600"}`} />
@@ -236,7 +226,6 @@ export default function WordChain({ room, myId }: Props) {
                             </div>
                         </div>
 
-                        {/* Target Chain Board (Opponent's Chain) */}
                         <div className="flex-1 w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-center gap-2 overflow-y-auto">
                             <div className="text-xs font-semibold text-slate-400 mb-1 text-center">
                                 Guessing {opponentName}'s Word Chain:
@@ -249,10 +238,10 @@ export default function WordChain({ room, myId }: Props) {
                                     <div
                                         key={idx}
                                         className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isGuessed
-                                                ? "bg-emerald-950/40 border-emerald-500/40"
-                                                : isCurrentTarget
-                                                    ? "bg-indigo-900/40 border-indigo-500 ring-2 ring-indigo-500/30"
-                                                    : "bg-slate-950/60 border-slate-800 opacity-60"
+                                            ? "bg-emerald-950/40 border-emerald-500/40"
+                                            : isCurrentTarget
+                                                ? "bg-indigo-900/40 border-indigo-500 ring-2 ring-indigo-500/30"
+                                                : "bg-slate-950/60 border-slate-800 opacity-60"
                                             }`}
                                     >
                                         <div className="flex items-center gap-3">
@@ -271,7 +260,6 @@ export default function WordChain({ room, myId }: Props) {
                             })}
                         </div>
 
-                        {/* Input Controls */}
                         <div className="w-full bg-slate-800 p-3 rounded-2xl border border-slate-700 flex flex-col gap-2">
                             <div className="flex gap-2">
                                 <input
@@ -303,7 +291,6 @@ export default function WordChain({ room, myId }: Props) {
                     </div>
                 )}
 
-                {/* GAME OVER SCREEN */}
                 {gameStatus === "gameover" && (
                     <div className="flex-1 flex flex-col items-center justify-center p-4">
                         <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center flex flex-col items-center gap-4 shadow-2xl">
