@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
 import { socket } from "./socket";
-import VideoCall from "./VideoCall";
 
 interface Player {
     id: string;
@@ -26,7 +25,7 @@ declare global {
     }
 }
 
-export default function Cinema({ room, myId }: Props) {
+export default function Cinema({ room, myId: _myId }: Props) {
     const [mode, setMode] = useState<"screenshare" | "embed">("embed");
     const [inputUrl, setInputUrl] = useState("");
     const [videoId, setVideoId] = useState<string | null>(null);
@@ -46,9 +45,6 @@ export default function Cinema({ room, myId }: Props) {
     const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
     const playerRef = useRef<any>(null);
     const isRemoteAction = useRef<boolean>(false);
-
-    const opponent = room.players.find((p) => p.id !== myId);
-    const opponentName = opponent ? opponent.name : "Waiting for opponent...";
 
     // Detect Mobile Devices on Mount
     useEffect(() => {
@@ -172,7 +168,6 @@ export default function Cinema({ room, myId }: Props) {
                 setHasRemoteScreen(true);
                 setMode("screenshare");
 
-                // Force play on mobile to bypass browser autoplay restrictions
                 remoteScreenRef.current
                     .play()
                     .catch((err) =>
@@ -407,23 +402,7 @@ export default function Cinema({ room, myId }: Props) {
     };
 
     return (
-        <div className="flex flex-col md:flex-row h-screen w-screen bg-slate-900 text-white overflow-hidden">
-            {/* Voice & Call Sidebar */}
-            <aside className="w-full md:w-80 lg:w-96 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 flex flex-col shrink-0 z-10 shadow-lg">
-                <div className="p-3 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        Voice Chat Panel
-                    </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        Connected
-                    </span>
-                </div>
-                <div className="flex-1 overflow-y-auto p-3">
-                    <VideoCall roomCode={room.code} opponentName={opponentName} />
-                </div>
-            </aside>
-
-            {/* Main Stage Area */}
+        <div className="flex flex-col h-screen w-screen bg-slate-900 text-white overflow-hidden">
             <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-950">
                 {/* Control Header Bar */}
                 <div className="p-4 bg-slate-800 border-b border-slate-700 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-md">
@@ -437,8 +416,8 @@ export default function Cinema({ room, myId }: Props) {
                         <button
                             onClick={() => setMode("screenshare")}
                             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${mode === "screenshare"
-                                    ? "bg-indigo-600 text-white shadow-sm"
-                                    : "text-slate-400 hover:text-slate-200"
+                                ? "bg-indigo-600 text-white shadow-sm"
+                                : "text-slate-400 hover:text-slate-200"
                                 }`}
                         >
                             🖥️ Screen Share Mode
@@ -446,8 +425,8 @@ export default function Cinema({ room, myId }: Props) {
                         <button
                             onClick={() => setMode("embed")}
                             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${mode === "embed"
-                                    ? "bg-indigo-600 text-white shadow-sm"
-                                    : "text-slate-400 hover:text-slate-200"
+                                ? "bg-indigo-600 text-white shadow-sm"
+                                : "text-slate-400 hover:text-slate-200"
                                 }`}
                         >
                             🌐 Embedded Stream Mode
@@ -484,8 +463,8 @@ export default function Cinema({ room, myId }: Props) {
                                             onClick={startScreenShare}
                                             disabled={isMobileDevice}
                                             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition text-white ${isMobileDevice
-                                                    ? "bg-slate-600 opacity-50 cursor-not-allowed"
-                                                    : "bg-indigo-600 hover:bg-indigo-500"
+                                                ? "bg-slate-600 opacity-50 cursor-not-allowed"
+                                                : "bg-indigo-600 hover:bg-indigo-500"
                                                 }`}
                                         >
                                             {isMobileDevice
@@ -505,7 +484,6 @@ export default function Cinema({ room, myId }: Props) {
 
                             {/* Video Player Display for Screen Share */}
                             <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden relative shadow-2xl flex items-center justify-center">
-                                {/* Local Screen Preview */}
                                 <video
                                     ref={localScreenRef}
                                     autoPlay
@@ -515,7 +493,6 @@ export default function Cinema({ room, myId }: Props) {
                                         }`}
                                 />
 
-                                {/* Remote Partner Screen Stream (Configured for Mobile WebRTC Playback) */}
                                 <video
                                     ref={remoteScreenRef}
                                     autoPlay
@@ -526,7 +503,6 @@ export default function Cinema({ room, myId }: Props) {
                                         }`}
                                 />
 
-                                {/* Placeholder when idle */}
                                 {!isSharingScreen && !hasRemoteScreen && (
                                     <div className="text-center p-6 text-slate-500 flex flex-col items-center gap-2">
                                         <div className="text-4xl">🖥️</div>
@@ -540,9 +516,7 @@ export default function Cinema({ room, myId }: Props) {
                             </div>
                         </div>
                     ) : (
-                        /* Embedded Stream Mode */
                         <div className="w-full h-full flex flex-col gap-3">
-                            {/* Input Form for Stream Links */}
                             <div className="flex gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700 shadow-md">
                                 <input
                                     type="text"
@@ -560,7 +534,6 @@ export default function Cinema({ room, myId }: Props) {
                                 </button>
                             </div>
 
-                            {/* YouTube Player Stage */}
                             <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden relative shadow-2xl flex items-center justify-center">
                                 <div id="youtube-player" className="w-full h-full" />
                                 {!videoId && (

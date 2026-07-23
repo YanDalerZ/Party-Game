@@ -29,10 +29,70 @@ export default function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const handleRoomCreated = (r: Room) => { setRoom(r); setError(""); };
-    const handleRoomUpdated = (r: Room) => { setRoom(r); setError(""); };
-    const handleGameStarted = (r: Room) => { setRoom(r); };
-    const handleErrorMessage = (msg: string) => setError(msg);
+    // Handle persistent room re-entry on initial load / socket connection
+    const tryRejoinSession = () => {
+      const savedSession = localStorage.getItem("game_session");
+      if (savedSession) {
+        try {
+          const { roomCode, playerId, playerName } = JSON.parse(savedSession);
+          socket.emit("rejoin_room", {
+            roomCode,
+            previousSocketId: playerId,
+            playerName,
+          });
+        } catch (e) {
+          localStorage.removeItem("game_session");
+        }
+      }
+    };
+
+    if (socket.connected) {
+      tryRejoinSession();
+    }
+    socket.on("connect", tryRejoinSession);
+
+    const handleRoomCreated = (r: Room) => {
+      setRoom(r);
+      setError("");
+      const myPlayer = r.players[r.players.length - 1];
+      if (myPlayer) {
+        localStorage.setItem(
+          "game_session",
+          JSON.stringify({
+            roomCode: r.code,
+            playerId: myPlayer.id,
+            playerName: myPlayer.name,
+          })
+        );
+      }
+    };
+
+    const handleRoomUpdated = (r: Room) => {
+      setRoom(r);
+      setError("");
+      const myPlayer = r.players.find((p) => p.id === socket.id);
+      if (myPlayer) {
+        localStorage.setItem(
+          "game_session",
+          JSON.stringify({
+            roomCode: r.code,
+            playerId: myPlayer.id,
+            playerName: myPlayer.name,
+          })
+        );
+      }
+    };
+
+    const handleGameStarted = (r: Room) => {
+      setRoom(r);
+    };
+
+    const handleErrorMessage = (msg: string) => {
+      setError(msg);
+      if (msg.includes("not found") || msg.includes("no longer exists")) {
+        localStorage.removeItem("game_session");
+      }
+    };
 
     socket.on("room_created", handleRoomCreated);
     socket.on("room_updated", handleRoomUpdated);
@@ -40,6 +100,7 @@ export default function App() {
     socket.on("error_message", handleErrorMessage);
 
     return () => {
+      socket.off("connect", tryRejoinSession);
       socket.off("room_created", handleRoomCreated);
       socket.off("room_updated", handleRoomUpdated);
       socket.off("game_started", handleGameStarted);
@@ -55,6 +116,14 @@ export default function App() {
   const joinRoom = () => {
     if (!name.trim() || !roomCodeInput.trim()) return setError("Enter name and code!");
     socket.emit("join_room", { roomCode: roomCodeInput, playerName: name });
+    localStorage.setItem(
+      "game_session",
+      JSON.stringify({
+        roomCode: roomCodeInput.toUpperCase(),
+        playerId: socket.id,
+        playerName: name,
+      })
+    );
   };
 
   const startGame = (gameId: string) => {
@@ -72,12 +141,12 @@ export default function App() {
   const opponent = room?.players.find((p) => p.id !== socket.id);
 
   const renderGameArea = () => {
-    if (room?.currentGame === "guess_number") return <GuessNumber room={room} myId={socket.id || ''} />;
-    if (room?.currentGame === "draw_guess") return <DrawGuess room={room} myId={socket.id || ''} />;
-    if (room?.currentGame === "cinema") return <Cinema room={room} myId={socket.id || ''} />;
-    if (room?.currentGame === "wordchain") return <WordChain room={room} myId={socket.id || ''} />;
-    if (room?.currentGame === "bomb") return <BombDefusal room={room} myId={socket.id || ''} />;
-    if (room?.currentGame === "detective") return <DetectiveCaricature room={room} myId={socket.id || ''} />;
+    if (room?.currentGame === "guess_number") return <GuessNumber room={room} myId={socket.id || ""} />;
+    if (room?.currentGame === "draw_guess") return <DrawGuess room={room} myId={socket.id || ""} />;
+    if (room?.currentGame === "cinema") return <Cinema room={room} myId={socket.id || ""} />;
+    if (room?.currentGame === "wordchain") return <WordChain room={room} myId={socket.id || ""} />;
+    if (room?.currentGame === "bomb") return <BombDefusal room={room} myId={socket.id || ""} />;
+    if (room?.currentGame === "detective") return <DetectiveCaricature room={room} myId={socket.id || ""} />;
 
     return (
       <div className="flex-1 flex items-center justify-center p-4">
@@ -149,12 +218,16 @@ export default function App() {
                     <div className="flex justify-between items-center text-lg font-bold">
                       <div className="flex flex-col items-center flex-1">
                         <span className="text-blue-400">{room.players[0].name}</span>
-                        <span className="text-2xl text-white">{room.scores[room.players[0].id] || 0}</span>
+                        <span className="text-2xl text-white">
+                          {(room.globalScores && room.globalScores[room.players[0].id]) || 0}
+                        </span>
                       </div>
                       <div className="text-slate-500 font-black px-4">VS</div>
                       <div className="flex flex-col items-center flex-1">
                         <span className="text-pink-400">{room.players[1].name}</span>
-                        <span className="text-2xl text-white">{room.scores[room.players[1].id] || 0}</span>
+                        <span className="text-2xl text-white">
+                          {(room.globalScores && room.globalScores[room.players[1].id]) || 0}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -229,11 +302,9 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col landscape:flex-row portrait:flex-col lg:flex-row min-h-screen lg:h-screen bg-slate-900 text-white overflow-x-hidden">
+    <div className="relative min-h-screen bg-slate-900 text-white overflow-x-hidden flex flex-col">
       {room && room.players.length === 2 && (
-        <div className="w-full portrait:w-full landscape:w-72 lg:w-80 shrink-0 border-b portrait:border-b landscape:border-b-0 landscape:border-r lg:border-b-0 lg:border-r border-slate-700 bg-slate-800/40">
-          <VideoCall roomCode={room.code} opponentName={opponent?.name || "Opponent"} />
-        </div>
+        <VideoCall roomCode={room.code} opponentName={opponent?.name || "Opponent"} />
       )}
 
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">

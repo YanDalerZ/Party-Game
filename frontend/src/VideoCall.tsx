@@ -23,12 +23,18 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
     const [isVideoOff, setIsVideoOff] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
 
+    // Floating Widget Layout & Drag States
+    const [isMinimized, setIsMinimized] = useState(false);
+    const [dockPosition, setDockPosition] = useState<"free" | "top-right" | "top-left" | "bottom-right">("top-right");
+    const [position, setPosition] = useState<{ x: number; y: number }>({ x: 20, y: 20 });
+    const [isDragging, setIsDragging] = useState(false);
+    const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
     useEffect(() => {
         let isMounted = true;
 
         async function initWebRTC() {
             try {
-                console.log("🎥 [Client] Requesting Camera & Microphone...");
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 localStreamRef.current = stream;
 
@@ -36,17 +42,14 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                     localVideoRef.current.srcObject = stream;
                 }
 
-                console.log("🛠️ [Client] Initializing Peer Connection...");
                 const pc = new RTCPeerConnection(peerConnectionConfig);
                 pcRef.current = pc;
 
                 stream.getTracks().forEach((track) => {
-                    console.log(`➕ [Client] Adding track: ${track.kind}`);
                     pc.addTrack(track, stream);
                 });
 
                 pc.ontrack = (event) => {
-                    console.log("📡 [Client] Received Remote Track!", event.streams);
                     if (remoteVideoRef.current && event.streams[0]) {
                         remoteVideoRef.current.srcObject = event.streams[0];
                         if (isMounted) setIsConnected(true);
@@ -55,52 +58,43 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
 
                 pc.onicecandidate = (e) => {
                     if (e.candidate) {
-                        console.log("🧊 [Client] Sending ICE Candidate to server...");
                         socket.emit("webrtc_ice_candidate", { roomCode, candidate: e.candidate });
                     }
                 };
 
                 pc.oniceconnectionstatechange = () => {
-                    console.log(`⚡ [Client] ICE Connection State Changed: ${pc.iceConnectionState}`);
                     if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
                         if (isMounted) setIsConnected(true);
                     }
                 };
 
-                // --- SOCKET EVENT HANDLERS ---
-
-                const handleOffer = async ({ offer, senderId }: { offer: RTCSessionDescriptionInit; senderId: string }) => {
-                    console.log(`📩 [Client] Received WebRTC OFFER from ${senderId}`);
+                const handleOffer = async ({ offer }: { offer: RTCSessionDescriptionInit; senderId: string }) => {
                     if (!pcRef.current) return;
                     try {
                         await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
                         const answer = await pcRef.current.createAnswer();
                         await pcRef.current.setLocalDescription(answer);
-                        console.log("📤 [Client] Sending WebRTC ANSWER back to server...");
                         socket.emit("webrtc_answer", { roomCode, answer });
                     } catch (err) {
-                        console.error("❌ [Client] Error handling Offer:", err);
+                        console.error("Error handling Offer:", err);
                     }
                 };
 
-                const handleAnswer = async ({ answer, senderId }: { answer: RTCSessionDescriptionInit; senderId: string }) => {
-                    console.log(`📩 [Client] Received WebRTC ANSWER from ${senderId}`);
+                const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit; senderId: string }) => {
                     if (!pcRef.current) return;
                     try {
                         await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-                        console.log("✅ [Client] Remote description set successfully from answer!");
                     } catch (err) {
-                        console.error("❌ [Client] Error handling Answer:", err);
+                        console.error("Error handling Answer:", err);
                     }
                 };
 
-                const handleCandidate = async ({ candidate, senderId }: { candidate: RTCIceCandidateInit; senderId: string }) => {
-                    console.log(`📩 [Client] Received ICE Candidate from ${senderId}`);
+                const handleCandidate = async ({ candidate }: { candidate: RTCIceCandidateInit; senderId: string }) => {
                     if (!pcRef.current) return;
                     try {
                         await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
                     } catch (err) {
-                        console.error("❌ [Client] Error adding ICE candidate:", err);
+                        console.error("Error adding ICE candidate:", err);
                     }
                 };
 
@@ -108,26 +102,21 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                 socket.on("webrtc_answer", handleAnswer);
                 socket.on("webrtc_ice_candidate", handleCandidate);
 
-                // Tell server this client is ready to exchange WebRTC signals
-                console.log("🚀 [Client] Emitting webrtc_ready...");
                 socket.emit("webrtc_ready", roomCode);
 
-                // Triggered only on Player 1 when both players are connected
                 socket.on("start_webrtc_offer", async () => {
-                    console.log("⚡ [Client] Server instructed this browser to create Offer!");
                     if (!pcRef.current) return;
                     try {
                         const offer = await pcRef.current.createOffer();
                         await pcRef.current.setLocalDescription(offer);
-                        console.log("📤 [Client] Sending created OFFER to server...");
                         socket.emit("webrtc_offer", { roomCode, offer });
                     } catch (err) {
-                        console.error("❌ [Client] Error creating Offer:", err);
+                        console.error("Error creating Offer:", err);
                     }
                 });
 
             } catch (err) {
-                console.error("❌ [Client] Camera/Microphone access error:", err);
+                console.error("Camera/Microphone access error:", err);
             }
         }
 
@@ -135,7 +124,6 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
 
         return () => {
             isMounted = false;
-            console.log("🧹 [Client] Cleaning up WebRTC connection...");
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach((track) => track.stop());
             }
@@ -169,64 +157,157 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
         }
     };
 
+    // Drag-and-Drop Handlers
+    const handleStartDrag = (clientX: number, clientY: number) => {
+        setIsDragging(true);
+        setDockPosition("free");
+        dragOffset.current = {
+            x: clientX - position.x,
+            y: clientY - position.y,
+        };
+    };
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        handleStartDrag(e.clientX, e.clientY);
+    };
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        const touch = e.touches[0];
+        handleStartDrag(touch.clientX, touch.clientY);
+    };
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isDragging) return;
+            setPosition({
+                x: Math.max(10, Math.min(window.innerWidth - 260, e.clientX - dragOffset.current.x)),
+                y: Math.max(10, Math.min(window.innerHeight - 150, e.clientY - dragOffset.current.y)),
+            });
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            setPosition({
+                x: Math.max(10, Math.min(window.innerWidth - 260, touch.clientX - dragOffset.current.x)),
+                y: Math.max(10, Math.min(window.innerHeight - 150, touch.clientY - dragOffset.current.y)),
+            });
+        };
+
+        const handleMouseUp = () => setIsDragging(false);
+
+        if (isDragging) {
+            window.addEventListener("mousemove", handleMouseMove);
+            window.addEventListener("mouseup", handleMouseUp);
+            window.addEventListener("touchmove", handleTouchMove);
+            window.addEventListener("touchend", handleMouseUp);
+        }
+
+        return () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+            window.removeEventListener("touchmove", handleTouchMove);
+            window.removeEventListener("touchend", handleMouseUp);
+        };
+    }, [isDragging]);
+
+    const getPositionStyle = () => {
+        if (dockPosition === "top-right") return { top: "16px", right: "16px" };
+        if (dockPosition === "top-left") return { top: "16px", left: "16px" };
+        if (dockPosition === "bottom-right") return { bottom: "16px", right: "16px" };
+        return { top: `${position.y}px`, left: `${position.x}px` };
+    };
+
     return (
-        <div className="w-full md:w-64 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 h-auto md:h-screen flex flex-col p-3 md:p-4 shadow-xl shrink-0 z-10 transition-all">
-            {/* Header / Status indicator */}
-            <div className="flex items-center justify-between md:justify-start gap-2 mb-3 md:mb-6">
-                <div className="flex items-center gap-2">
-                    <div className={`w-2.5 h-2.5 md:w-3 md:h-3 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
-                    <span className="text-sm md:text-base font-semibold text-slate-200">
-                        {isConnected ? "Live Call" : "Connecting..."}
-                    </span>
-                </div>
-            </div>
+        <div
+            style={getPositionStyle()}
+            className="fixed z-50 transition-shadow duration-200"
+        >
+            <div className="bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden w-64 flex flex-col">
+                {/* Drag Handle & Header Controls */}
+                <div
+                    onMouseDown={handleMouseDown}
+                    onTouchStart={handleTouchStart}
+                    className="cursor-grab active:cursor-grabbing bg-slate-900/80 px-3 py-2 flex items-center justify-between border-b border-slate-700/60 select-none"
+                >
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">⋮⋮</span>
+                        <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
+                        <span className="text-xs font-semibold text-slate-200">
+                            {isConnected ? "Call Active" : "Connecting..."}
+                        </span>
+                    </div>
 
-            {/* Video Streams Container */}
-            <div className="flex-1 grid grid-cols-2 md:grid-cols-1 gap-2 md:gap-4">
-                {/* Remote Video */}
-                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg aspect-video md:aspect-auto md:flex-1">
-                    <video
-                        ref={remoteVideoRef}
-                        autoPlay
-                        playsInline
-                        className="absolute inset-0 w-full h-full object-cover"
-                    />
-                    <div className="absolute bottom-1.5 left-1.5 md:bottom-2 md:left-2 bg-black/60 px-1.5 py-0.5 md:px-2 md:py-1 rounded text-[10px] md:text-xs font-medium backdrop-blur-sm text-slate-200 truncate max-w-[90%]">
-                        {isConnected ? opponentName : "Connecting..."}
+                    <div className="flex items-center gap-1">
+                        {/* Quick Snap Positions */}
+                        <button
+                            onClick={() => setDockPosition(dockPosition === "top-right" ? "bottom-right" : "top-right")}
+                            className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded transition"
+                            title="Lock / Dock Alignment"
+                        >
+                            📌
+                        </button>
+                        {/* Minimize / Expand Toggle */}
+                        <button
+                            onClick={() => setIsMinimized(!isMinimized)}
+                            className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded transition"
+                        >
+                            {isMinimized ? "🟩" : "➖"}
+                        </button>
                     </div>
                 </div>
 
-                {/* Local Video */}
-                <div className="relative rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-700 shadow-lg aspect-video md:aspect-auto md:flex-1">
-                    <video
-                        ref={localVideoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="absolute inset-0 w-full h-full object-cover -scale-x-100"
-                    />
-                    <div className="absolute bottom-1.5 left-1.5 md:bottom-2 md:left-2 bg-black/60 px-1.5 py-0.5 md:px-2 md:py-1 rounded text-[10px] md:text-xs font-medium backdrop-blur-sm text-slate-200">
-                        You
-                    </div>
-                </div>
-            </div>
+                {!isMinimized && (
+                    <div className="p-2 space-y-2">
+                        {/* Video Streams Grid */}
+                        <div className="grid grid-cols-2 gap-2">
+                            {/* Remote Video */}
+                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 aspect-video">
+                                <video
+                                    ref={remoteVideoRef}
+                                    autoPlay
+                                    playsInline
+                                    className="absolute inset-0 w-full h-full object-cover"
+                                />
+                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[90%]">
+                                    {isConnected ? opponentName : "Connecting..."}
+                                </div>
+                            </div>
 
-            {/* Control Buttons */}
-            <div className="grid grid-cols-2 gap-2 mt-3 md:mt-4">
-                <button
-                    onClick={toggleAudio}
-                    className={`py-2 md:py-3 text-xs md:text-sm rounded-lg font-medium transition-colors text-white ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
-                        }`}
-                >
-                    {isAudioMuted ? "🔇 Muted" : "🎤 Mic On"}
-                </button>
-                <button
-                    onClick={toggleVideo}
-                    className={`py-2 md:py-3 text-xs md:text-sm rounded-lg font-medium transition-colors text-white ${isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
-                        }`}
-                >
-                    {isVideoOff ? "🚫 Cam Off" : "📷 Cam On"}
-                </button>
+                            {/* Local Video */}
+                            <div className="relative rounded-lg overflow-hidden bg-slate-950 border border-slate-700 aspect-video">
+                                <video
+                                    ref={localVideoRef}
+                                    autoPlay
+                                    playsInline
+                                    muted
+                                    className="absolute inset-0 w-full h-full object-cover -scale-x-100"
+                                />
+                                <div className="absolute bottom-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[9px] text-slate-200">
+                                    You
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Control Buttons */}
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                            <button
+                                onClick={toggleAudio}
+                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                                    }`}
+                            >
+                                {isAudioMuted ? "🔇 Muted" : "🎤 Mic On"}
+                            </button>
+                            <button
+                                onClick={toggleVideo}
+                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                                    }`}
+                            >
+                                {isVideoOff ? "🚫 Cam Off" : "📷 Cam On"}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
