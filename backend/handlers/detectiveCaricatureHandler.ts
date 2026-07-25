@@ -1,10 +1,29 @@
 import { Server, Socket } from "socket.io";
 
 const FALLBACK_IMAGES = [
-    "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500",
-    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500",
-    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=500",
-    "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image10-157x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image3-300x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image8.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image22-150x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image20-206x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image26.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image13-146x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image24-261x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image23-200x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image21-206x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image1-300x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image17-144x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image14.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image5.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image16-150x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image4-160x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image7-208x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image11-136x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image2.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image15-166x300.png",
+    "https://www.animaker.com/hub/wp-content/uploads/2025/11/image12-217x300.png",
+
+
 ];
 
 async function fetchRandomSuspectImage(): Promise<string> {
@@ -61,7 +80,7 @@ export function registerDetectiveCaricatureHandlers(io: Server, socket: Socket, 
         room.gameData = {
             describer,
             artist,
-            timeLeft: 60,
+            timeLeft: 120,
             suspectImage,
             finalCanvas: null,
             gameStatus: "playing",
