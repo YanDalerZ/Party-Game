@@ -7,6 +7,7 @@ import WordChain from "./WordChain";
 import BombDefusal from "./BombDefusal";
 import DetectiveCaricature from "./DetectiveCaricature";
 import VideoCall from "./VideoCall";
+import PhotoBooth from "./PhotoBooth";
 
 export interface Player {
   id: string;
@@ -147,7 +148,7 @@ export default function App() {
     if (room?.currentGame === "wordchain") return <WordChain room={room} myId={socket.id || ""} />;
     if (room?.currentGame === "bomb") return <BombDefusal room={room} myId={socket.id || ""} />;
     if (room?.currentGame === "detective") return <DetectiveCaricature room={room} myId={socket.id || ""} />;
-
+if (room?.currentGame === "photobooth") return <PhotoBooth room={room} myId={socket.id || ""} />;
     return (
       <div className="flex-1 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-slate-800 p-8 rounded-2xl shadow-2xl border border-slate-700 flex flex-col justify-between">
@@ -278,6 +279,10 @@ export default function App() {
                     </button>
                     <button onClick={() => startGame("detective")} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-cyan-500/30 flex justify-between px-6 items-center">
                       <span>6️⃣ Detective Caricature 🔍</span>
+                      <span>→</span>
+                    </button>
+                    <button onClick={() => startGame("photobooth")} className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-teal-500/30 flex justify-between px-6 items-center">
+                      <span>7️⃣ PhotoBooth 📸</span>
                       <span>→</span>
                     </button>
                   </div>
