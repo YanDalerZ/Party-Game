@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { socket } from "./socket";
+
 export interface Player {
     id: string;
     name: string;
 }
+
 export interface Room {
     code: string;
     players: Player[];
@@ -12,6 +14,7 @@ export interface Room {
     scores: Record<string, number>;
     globalScores: Record<string, number>;
 }
+
 interface DetectiveCaricatureProps {
     room: Room;
     myId: string;
@@ -42,7 +45,7 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
         // Setup canvas
         const canvas = canvasRef.current;
         if (canvas) {
-            // Set actual resolution
+            // Set internal drawing resolution
             canvas.width = 500;
             canvas.height = 500;
 
@@ -93,40 +96,53 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
         };
     }, [room.code]);
 
-    const startDrawing = ({ nativeEvent }: React.MouseEvent | React.TouchEvent) => {
-        if (gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
+    // Helper to calculate exact coordinates relative to canvas internal scaling
+    const getCanvasCoordinates = (nativeEvent: MouseEvent | TouchEvent) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return { x: 0, y: 0 };
 
-        let offsetX, offsetY;
-        if ("touches" in nativeEvent) {
-            const rect = canvasRef.current?.getBoundingClientRect();
-            offsetX = nativeEvent.touches[0].clientX - (rect?.left || 0);
-            offsetY = nativeEvent.touches[0].clientY - (rect?.top || 0);
-        } else {
-            offsetX = (nativeEvent as MouseEvent).offsetX;
-            offsetY = (nativeEvent as MouseEvent).offsetY;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        let clientX = 0;
+        let clientY = 0;
+
+        if ("touches" in nativeEvent && nativeEvent.touches.length > 0) {
+            clientX = nativeEvent.touches[0].clientX;
+            clientY = nativeEvent.touches[0].clientY;
+        } else if ("clientX" in nativeEvent) {
+            clientX = (nativeEvent as MouseEvent).clientX;
+            clientY = (nativeEvent as MouseEvent).clientY;
         }
 
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY,
+        };
+    };
+
+    const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+        if (gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
+
+        const { x, y } = getCanvasCoordinates(e.nativeEvent);
+
         contextRef.current?.beginPath();
-        contextRef.current?.moveTo(offsetX, offsetY);
+        contextRef.current?.moveTo(x, y);
         setIsDrawing(true);
     };
 
-    const draw = ({ nativeEvent }: React.MouseEvent | React.TouchEvent) => {
+    const draw = (e: React.MouseEvent | React.TouchEvent) => {
         if (!isDrawing || gameState.myRole !== "artist" || gameState.gameStatus !== "playing") return;
 
-        nativeEvent.preventDefault(); // Prevent scrolling on touch devices
-
-        let offsetX, offsetY;
-        if ("touches" in nativeEvent) {
-            const rect = canvasRef.current?.getBoundingClientRect();
-            offsetX = nativeEvent.touches[0].clientX - (rect?.left || 0);
-            offsetY = nativeEvent.touches[0].clientY - (rect?.top || 0);
-        } else {
-            offsetX = (nativeEvent as MouseEvent).offsetX;
-            offsetY = (nativeEvent as MouseEvent).offsetY;
+        // Prevent touchscreen scrolling
+        if (e.nativeEvent.cancelable) {
+            e.nativeEvent.preventDefault();
         }
 
-        contextRef.current?.lineTo(offsetX, offsetY);
+        const { x, y } = getCanvasCoordinates(e.nativeEvent);
+
+        contextRef.current?.lineTo(x, y);
         contextRef.current?.stroke();
     };
 
@@ -156,74 +172,77 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
     };
 
     if (!gameState.gameStatus) {
-        return <div className="text-center p-8">Loading Detective Game...</div>;
+        return <div className="text-center p-8 text-white">Loading Detective Game...</div>;
     }
 
+    const isArtist = gameState.myRole === "artist";
+
     return (
-        <div className="flex-1 flex flex-col items-center justify-center p-4">
-            <div className="max-w-4xl w-full bg-slate-800 p-6 rounded-2xl shadow-2xl border border-slate-700">
+        <div className="flex-1 flex flex-col items-center justify-start sm:justify-center p-2 sm:p-4 touch-none select-none">
+            <div className="max-w-4xl w-full bg-slate-800 p-3 sm:p-6 rounded-2xl shadow-2xl border border-slate-700">
 
                 {/* Header Area */}
-                <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                <div className="flex justify-between items-center mb-3 sm:mb-6 border-b border-slate-700 pb-3">
                     <div>
-                        <h2 className="text-2xl font-bold text-white">Detective Caricature 🔍</h2>
-                        <p className="text-slate-400">
+                        <h2 className="text-lg sm:text-2xl font-bold text-white">Detective Caricature 🔍</h2>
+                        <p className="text-xs sm:text-sm text-slate-400">
                             Role: <span className="font-semibold text-cyan-400 uppercase">{gameState.myRole}</span>
                         </p>
                     </div>
                     <div className="text-right">
-                        <div className={`text-4xl font-mono font-black ${gameState.timeLeft <= 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                        <div className={`text-2xl sm:text-4xl font-mono font-black ${gameState.timeLeft <= 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
                             00:{gameState.timeLeft.toString().padStart(2, '0')}
                         </div>
-                        <p className="text-slate-400 text-sm">Time Remaining</p>
+                        <p className="text-slate-400 text-xs sm:text-sm">Time Remaining</p>
                     </div>
                 </div>
 
-                {/* Game Area */}
-                <div className="flex flex-col md:flex-row gap-6">
-
-                    {/* Left Column: Suspect Image (Describer) or Instructions (Artist) */}
-                    <div className="flex-1 flex flex-col items-center bg-slate-900/50 p-4 rounded-xl border border-slate-600/50">
-                        {gameState.myRole === "describer" ? (
-                            <>
-                                <h3 className="text-lg font-semibold text-white mb-4">Describe this Suspect!</h3>
-                                {gameState.suspectImage ? (
-                                    <img
-                                        src={gameState.suspectImage}
-                                        alt="Suspect"
-                                        className="w-full max-w-sm rounded-lg shadow-md border-2 border-slate-700"
-                                    />
-                                ) : (
-                                    <div className="w-full max-w-sm aspect-square bg-slate-700 animate-pulse rounded-lg" />
-                                )}
-                                <p className="mt-4 text-sm text-slate-400 text-center">
-                                    Detail their face, hair, and accessories to the artist.
-                                </p>
-                            </>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-4">
-                                <div className="text-6xl">👂</div>
-                                <h3 className="text-xl font-bold text-white">Listen Carefully!</h3>
-                                <p className="text-slate-400">
-                                    The Describer is looking at a photo. Draw exactly what they describe to catch the suspect.
-                                </p>
-                            </div>
-                        )}
+                {/* Compact Instruction Banner for Artist */}
+                {isArtist && gameState.gameStatus === "playing" && (
+                    <div className="mb-3 px-3 py-2 bg-slate-900/80 rounded-lg border border-slate-700/60 text-center flex items-center justify-center gap-2">
+                        <span className="text-lg sm:text-xl">👂</span>
+                        <p className="text-xs sm:text-sm text-slate-300">
+                            <strong>Listen closely!</strong> Draw what the describer explains.
+                        </p>
                     </div>
+                )}
 
-                    {/* Right Column: Canvas & Toolbar */}
-                    <div className="flex-1 flex flex-col items-center">
-                        {/* Toolbar (Only for Artist) */}
-                        {gameState.myRole === "artist" && gameState.gameStatus === "playing" && (
-                            <div className="w-full max-w-sm flex flex-wrap gap-3 mb-4 p-3 bg-slate-900 rounded-xl border border-slate-700 items-center justify-center">
+                {/* Game Area Layout */}
+                <div className={`flex flex-col ${!isArtist ? 'md:flex-row' : ''} gap-4 sm:gap-6 items-center justify-center`}>
+
+                    {/* Left Column: Only for Describer */}
+                    {!isArtist && (
+                        <div className="w-full md:flex-1 flex flex-col items-center bg-slate-900/50 p-3 sm:p-4 rounded-xl border border-slate-600/50">
+                            <h3 className="text-base sm:text-lg font-semibold text-white mb-2 sm:mb-4">Describe this Suspect!</h3>
+                            {gameState.suspectImage ? (
+                                <img
+                                    src={gameState.suspectImage}
+                                    alt="Suspect"
+                                    className="w-full max-w-xs sm:max-w-sm rounded-lg shadow-md border-2 border-slate-700 object-contain"
+                                />
+                            ) : (
+                                <div className="w-full max-w-xs sm:max-w-sm aspect-square bg-slate-700 animate-pulse rounded-lg" />
+                            )}
+                            <p className="mt-2 sm:mt-4 text-xs sm:text-sm text-slate-400 text-center">
+                                Detail their face, hair, and features to the artist.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Right/Main Column: Canvas & Toolbar */}
+                    <div className="w-full flex-1 flex flex-col items-center">
+                        
+                        {/* Toolbar (Artist Only) */}
+                        {isArtist && gameState.gameStatus === "playing" && (
+                            <div className="w-full max-w-md flex flex-wrap gap-2 sm:gap-3 mb-3 p-2 sm:p-3 bg-slate-900 rounded-xl border border-slate-700 items-center justify-between">
 
                                 {/* Colors */}
-                                <div className="flex gap-2 border-r border-slate-700 pr-3">
+                                <div className="flex gap-1.5 sm:gap-2 border-r border-slate-700 pr-2 sm:pr-3">
                                     {COLORS.map((c) => (
                                         <button
                                             key={c.name}
                                             onClick={() => { setBrushColor(c.hex); setIsEraser(false); }}
-                                            className={`w-6 h-6 rounded-full border-2 transition-transform ${brushColor === c.hex && !isEraser ? 'scale-125 border-white' : 'border-transparent hover:scale-110'}`}
+                                            className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 transition-transform ${brushColor === c.hex && !isEraser ? 'scale-110 border-white ring-2 ring-cyan-400' : 'border-transparent hover:scale-105'}`}
                                             style={{ backgroundColor: c.hex }}
                                             title={c.name}
                                         />
@@ -232,60 +251,60 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
 
                                 {/* Eraser */}
                                 <button
-                                    onClick={() => setIsEraser(true)}
-                                    className={`px-3 py-1 rounded-md text-sm font-bold transition-colors ${isEraser ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                                    onClick={() => setIsEraser(!isEraser)}
+                                    className={`px-2.5 py-1 rounded-md text-xs sm:text-sm font-bold transition-colors ${isEraser ? 'bg-cyan-600 text-white ring-2 ring-cyan-300' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
                                 >
                                     Eraser
                                 </button>
 
                                 {/* Size Slider */}
-                                <div className="flex items-center gap-2 pl-2">
-                                    <span className="text-xs text-slate-400">Size:</span>
+                                <div className="flex items-center gap-1.5 pl-1">
+                                    <span className="text-xs text-slate-400 hidden sm:inline">Size:</span>
                                     <input
                                         type="range"
-                                        min="1"
-                                        max="20"
+                                        min="2"
+                                        max="25"
                                         value={brushSize}
                                         onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                                        className="w-20 accent-cyan-500"
+                                        className="w-16 sm:w-20 accent-cyan-500"
                                     />
                                 </div>
 
                                 {/* Clear Canvas */}
                                 <button
                                     onClick={clearCanvas}
-                                    className="ml-auto text-xs text-red-400 hover:text-red-300 font-semibold"
+                                    className="text-xs text-red-400 hover:text-red-300 font-semibold px-1"
                                 >
                                     Clear
                                 </button>
                             </div>
                         )}
 
-                        {/* Canvas Area */}
-                        <div className="relative">
+                        {/* Canvas Area Container */}
+                        <div className="relative w-full max-w-md flex justify-center items-center">
                             <canvas
                                 ref={canvasRef}
                                 onMouseDown={startDrawing}
                                 onMouseMove={draw}
                                 onMouseUp={stopDrawing}
-                                onMouseOut={stopDrawing}
+                                onMouseLeave={stopDrawing}
                                 onTouchStart={startDrawing}
                                 onTouchMove={draw}
                                 onTouchEnd={stopDrawing}
-                                className={`bg-white rounded-lg shadow-inner cursor-crosshair border-4 ${gameState.gameStatus === "reveal" ? "border-amber-500" : "border-slate-600"
+                                className={`bg-white rounded-lg shadow-inner cursor-crosshair border-4 touch-none ${gameState.gameStatus === "reveal" ? "border-amber-500" : "border-slate-600"
                                     }`}
                                 style={{
                                     width: '100%',
-                                    maxWidth: '400px',
                                     aspectRatio: '1/1',
-                                    pointerEvents: (gameState.myRole === "artist" && gameState.gameStatus === "playing") ? 'auto' : 'none'
+                                    touchAction: 'none',
+                                    pointerEvents: (isArtist && gameState.gameStatus === "playing") ? 'auto' : 'none'
                                 }}
                             />
 
-                            {/* Describer Overlay Text */}
+                            {/* Describer Overlay Badge */}
                             {gameState.myRole === "describer" && gameState.gameStatus === "playing" && (
-                                <div className="absolute top-2 left-2 bg-slate-900/80 text-cyan-400 text-xs px-2 py-1 rounded font-semibold">
-                                    Live View
+                                <div className="absolute top-2 left-2 bg-slate-900/80 text-cyan-400 text-xs px-2 py-1 rounded font-semibold backdrop-blur-sm">
+                                    Live Drawing View
                                 </div>
                             )}
                         </div>
@@ -294,12 +313,12 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
 
                 {/* Post-Game Reveal Area */}
                 {gameState.gameStatus === "reveal" && (
-                    <div className="mt-8 pt-6 border-t border-slate-700 animate-fade-in-up">
-                        <h3 className="text-2xl font-bold text-center text-amber-400 mb-6">Time's Up! The Reveal...</h3>
+                    <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-700">
+                        <h3 className="text-xl sm:text-2xl font-bold text-center text-amber-400 mb-4 sm:mb-6">Time's Up! The Reveal...</h3>
 
-                        {gameState.myRole === "artist" && (
-                            <div className="flex flex-col items-center mb-8">
-                                <p className="text-slate-300 mb-4">Here is the actual suspect you were trying to draw:</p>
+                        {isArtist && (
+                            <div className="flex flex-col items-center mb-6">
+                                <p className="text-xs sm:text-sm text-slate-300 mb-3">Here is the actual suspect you were trying to draw:</p>
                                 <img
                                     src={gameState.suspectImage}
                                     alt="Actual Suspect"
@@ -308,16 +327,16 @@ export default function DetectiveCaricature({ room, myId: _myId }: DetectiveCari
                             </div>
                         )}
 
-                        <div className="flex justify-center gap-4">
+                        <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
                             <button
                                 onClick={() => endGame(true)}
-                                className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg shadow-green-500/30 transition-all"
+                                className="w-full sm:w-auto bg-green-600 hover:bg-green-500 text-white font-bold py-2.5 sm:py-3 px-6 rounded-lg shadow-lg shadow-green-500/20 transition-all text-sm sm:text-base"
                             >
                                 It's a Match! (+5 pts)
                             </button>
                             <button
                                 onClick={() => endGame(false)}
-                                className="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg shadow-red-500/30 transition-all"
+                                className="w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white font-bold py-2.5 sm:py-3 px-6 rounded-lg shadow-lg shadow-red-500/20 transition-all text-sm sm:text-base"
                             >
                                 No Resemblance
                             </button>

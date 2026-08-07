@@ -6,7 +6,8 @@ export function registerWebRTCHandlers(io: Server, socket: Socket, rooms: Record
         const room = rooms[roomCode];
         console.log(`[WEBRTC READY] ${socket.id} is ready in room ${roomCode}`);
 
-        if (room && room.players.length === 2) {
+        // Added defensive check for room.players
+        if (room && room.players && room.players.length === 2) {
             const hostId = room.players[0].id;
             console.log(`[WEBRTC TRIGGER] Both players present. Triggering offer from Host (${hostId})`);
             io.to(hostId).emit("start_webrtc_offer");

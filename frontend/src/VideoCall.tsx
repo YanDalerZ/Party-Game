@@ -32,10 +32,58 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
 
     useEffect(() => {
         let isMounted = true;
+        
+        // Hoist handlers so they can be accurately referenced during cleanup
+        const handleOffer = async ({ offer }: { offer: RTCSessionDescriptionInit; senderId: string }) => {
+            if (!pcRef.current) return;
+            try {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await pcRef.current.createAnswer();
+                await pcRef.current.setLocalDescription(answer);
+                socket.emit("webrtc_answer", { roomCode, answer });
+            } catch (err) {
+                console.error("Error handling Offer:", err);
+            }
+        };
+
+        const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit; senderId: string }) => {
+            if (!pcRef.current) return;
+            try {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+            } catch (err) {
+                console.error("Error handling Answer:", err);
+            }
+        };
+
+        const handleCandidate = async ({ candidate }: { candidate: RTCIceCandidateInit; senderId: string }) => {
+            if (!pcRef.current) return;
+            try {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+                console.error("Error adding ICE candidate:", err);
+            }
+        };
+
+        const handleStartOffer = async () => {
+            if (!pcRef.current) return;
+            try {
+                const offer = await pcRef.current.createOffer();
+                await pcRef.current.setLocalDescription(offer);
+                socket.emit("webrtc_offer", { roomCode, offer });
+            } catch (err) {
+                console.error("Error creating Offer:", err);
+            }
+        };
 
         async function initWebRTC() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                // If the component unmounted while waiting for permissions, kill the stream immediately
+                if (!isMounted) {
+                    stream.getTracks().forEach(track => track.stop());
+                    return;
+                }
+                
                 localStreamRef.current = stream;
 
                 if (localVideoRef.current) {
@@ -68,52 +116,12 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                     }
                 };
 
-                const handleOffer = async ({ offer }: { offer: RTCSessionDescriptionInit; senderId: string }) => {
-                    if (!pcRef.current) return;
-                    try {
-                        await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-                        const answer = await pcRef.current.createAnswer();
-                        await pcRef.current.setLocalDescription(answer);
-                        socket.emit("webrtc_answer", { roomCode, answer });
-                    } catch (err) {
-                        console.error("Error handling Offer:", err);
-                    }
-                };
-
-                const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit; senderId: string }) => {
-                    if (!pcRef.current) return;
-                    try {
-                        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-                    } catch (err) {
-                        console.error("Error handling Answer:", err);
-                    }
-                };
-
-                const handleCandidate = async ({ candidate }: { candidate: RTCIceCandidateInit; senderId: string }) => {
-                    if (!pcRef.current) return;
-                    try {
-                        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-                    } catch (err) {
-                        console.error("Error adding ICE candidate:", err);
-                    }
-                };
-
                 socket.on("webrtc_offer", handleOffer);
                 socket.on("webrtc_answer", handleAnswer);
                 socket.on("webrtc_ice_candidate", handleCandidate);
+                socket.on("start_webrtc_offer", handleStartOffer);
 
                 socket.emit("webrtc_ready", roomCode);
-
-                socket.on("start_webrtc_offer", async () => {
-                    if (!pcRef.current) return;
-                    try {
-                        const offer = await pcRef.current.createOffer();
-                        await pcRef.current.setLocalDescription(offer);
-                        socket.emit("webrtc_offer", { roomCode, offer });
-                    } catch (err) {
-                        console.error("Error creating Offer:", err);
-                    }
-                });
 
             } catch (err) {
                 console.error("Camera/Microphone access error:", err);
@@ -124,16 +132,19 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
 
         return () => {
             isMounted = false;
+            
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach((track) => track.stop());
             }
             if (pcRef.current) {
                 pcRef.current.close();
             }
-            socket.off("webrtc_offer");
-            socket.off("webrtc_answer");
-            socket.off("webrtc_ice_candidate");
-            socket.off("start_webrtc_offer");
+            
+            // Clean up exact listener references instead of wiping all of them globally
+            socket.off("webrtc_offer", handleOffer);
+            socket.off("webrtc_answer", handleAnswer);
+            socket.off("webrtc_ice_candidate", handleCandidate);
+            socket.off("start_webrtc_offer", handleStartOffer);
         };
     }, [roomCode]);
 
@@ -228,10 +239,11 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
             className="fixed z-50 transition-shadow duration-200"
         >
             <div
-                className={`bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${isMinimized
+                className={`bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${
+                    isMinimized
                         ? "w-64 resize-none"
                         : "w-72 min-w-[220px] max-w-[90vw] min-h-[160px] max-h-[80vh] resize overflow-auto"
-                    }`}
+                }`}
             >
                 {/* Drag Handle & Header Controls */}
                 <div
@@ -302,15 +314,17 @@ export default function VideoCall({ roomCode, opponentName }: Props) {
                         <div className="grid grid-cols-2 gap-1.5 shrink-0 pt-1">
                             <button
                                 onClick={toggleAudio}
-                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
-                                    }`}
+                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${
+                                    isAudioMuted ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                                }`}
                             >
                                 {isAudioMuted ? "🔇 Muted" : "🎤 Mic On"}
                             </button>
                             <button
                                 onClick={toggleVideo}
-                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
-                                    }`}
+                                className={`py-1.5 text-xs rounded-lg font-medium transition-colors text-white ${
+                                    isVideoOff ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"
+                                }`}
                             >
                                 {isVideoOff ? "🚫 Cam Off" : "📷 Cam On"}
                             </button>

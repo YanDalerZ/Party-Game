@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { socket } from "./socket";
 import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 
@@ -35,7 +35,8 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
     // Offscreen Canvas Cache for Smooth Segmentation Filtering
     const localCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const remoteCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
-    const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const localMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const remoteMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
     const pcRef = useRef<RTCPeerConnection | null>(null);
     const localStreamRef = useRef<MediaStream | null>(null);
@@ -82,7 +83,7 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         img.onload = () => setBgImageObj(img);
     }, [selectedBg]);
 
-    // 3. WebRTC Call & Stream Setup with Auto-Play Fallbacks
+    // 3. WebRTC Call & Stream Setup
     useEffect(() => {
         let isMounted = true;
 
@@ -179,74 +180,72 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         };
     }, [room.code]);
 
-    // High Quality Soft-Edge Cutout Processor
+    // High Quality Soft-Edge Cutout Processor (Optimized via 32-bit Buffer)
     const processHighQualityCutout = (
         video: HTMLVideoElement,
-        cutoutCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>
+        cutoutCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
+        maskCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>
     ): HTMLCanvasElement | null => {
-        if (!cutoutCanvasRef.current) {
-            cutoutCanvasRef.current = document.createElement("canvas");
-        }
-        if (!maskCanvasRef.current) {
-            maskCanvasRef.current = document.createElement("canvas");
-        }
+        if (!segmenterRef.current || !isSegmenterReady || video.readyState < 2) return null;
 
-        const width = 1280;
-        const height = 720;
+        try {
+            const result = segmenterRef.current.segmentForVideo(video, performance.now());
+            if (!result || !result.categoryMask) return null;
 
-        const cutoutCanvas = cutoutCanvasRef.current;
-        const maskCanvas = maskCanvasRef.current;
+            // Dynamically match the actual camera resolution to prevent distortion
+            const maskWidth = result.categoryMask.width;
+            const maskHeight = result.categoryMask.height;
 
-        cutoutCanvas.width = width;
-        cutoutCanvas.height = height;
-        maskCanvas.width = width;
-        maskCanvas.height = height;
+            if (!cutoutCanvasRef.current) cutoutCanvasRef.current = document.createElement("canvas");
+            if (!maskCanvasRef.current) maskCanvasRef.current = document.createElement("canvas");
 
-        const cutoutCtx = cutoutCanvas.getContext("2d");
-        const maskCtx = maskCanvas.getContext("2d");
+            const cutoutCanvas = cutoutCanvasRef.current;
+            const maskCanvas = maskCanvasRef.current;
 
-        if (!cutoutCtx || !maskCtx) return null;
-
-        cutoutCtx.clearRect(0, 0, width, height);
-        maskCtx.clearRect(0, 0, width, height);
-
-        if (segmenterRef.current && isSegmenterReady && video.readyState >= 2) {
-            try {
-                const result = segmenterRef.current.segmentForVideo(video, performance.now());
-                if (result && result.categoryMask) {
-                    const categoryMask = result.categoryMask.getAsUint8Array();
-                    const maskImageData = maskCtx.createImageData(width, height);
-                    const data = maskImageData.data;
-
-                    // Smooth edge mask generation
-                    for (let i = 0; i < categoryMask.length; i++) {
-                        const isPerson = categoryMask[i] > 0;
-                        const idx = i * 4;
-                        data[idx] = 255;
-                        data[idx + 1] = 255;
-                        data[idx + 2] = 255;
-                        data[idx + 3] = isPerson ? 255 : 0;
-                    }
-                    maskCtx.putImageData(maskImageData, 0, 0);
-
-                    // Draw camera video onto cutout canvas
-                    cutoutCtx.drawImage(video, 0, 0, width, height);
-
-                    // Apply Mask using destination-in compositing for anti-aliased hair/body edges
-                    cutoutCtx.globalCompositeOperation = "destination-in";
-                    cutoutCtx.drawImage(maskCanvas, 0, 0, width, height);
-                    cutoutCtx.globalCompositeOperation = "source-over";
-
-                    return cutoutCanvas;
-                }
-            } catch (e) {
-                // Fallback to raw video frame on segmenter exception
+            if (cutoutCanvas.width !== maskWidth) {
+                cutoutCanvas.width = maskWidth;
+                cutoutCanvas.height = maskHeight;
+                maskCanvas.width = maskWidth;
+                maskCanvas.height = maskHeight;
             }
-        }
 
-        // Fallback: Raw video if segmentation is loading or skipped
-        cutoutCtx.drawImage(video, 0, 0, width, height);
-        return cutoutCanvas;
+            const cutoutCtx = cutoutCanvas.getContext("2d", { willReadFrequently: true });
+            const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
+
+            if (!cutoutCtx || !maskCtx) return null;
+
+            const categoryMask = result.categoryMask.getAsUint8Array();
+            const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
+            
+            // Ultra-fast 32-bit pixel array manipulation
+            const data32 = new Uint32Array(maskImageData.data.buffer);
+            for (let i = 0; i < categoryMask.length; i++) {
+                // 0xFFFFFFFF = Fully opaque white (Person)
+                // 0x00000000 = Fully transparent (Background)
+                data32[i] = categoryMask[i] > 0 ? 0xFFFFFFFF : 0x00000000;
+            }
+            maskCtx.putImageData(maskImageData, 0, 0);
+
+            cutoutCtx.clearRect(0, 0, maskWidth, maskHeight);
+            
+            // Draw raw video frame
+            cutoutCtx.drawImage(video, 0, 0, maskWidth, maskHeight);
+            
+            // Apply destination-in to cut out the person cleanly.
+            // A slight 2px blur creates a natural anti-aliased edge similar to Google Meet
+            cutoutCtx.globalCompositeOperation = "destination-in";
+            cutoutCtx.filter = "blur(2px)";
+            cutoutCtx.drawImage(maskCanvas, 0, 0, maskWidth, maskHeight);
+            
+            // Reset for next frame
+            cutoutCtx.filter = "none";
+            cutoutCtx.globalCompositeOperation = "source-over";
+
+            return cutoutCanvas;
+        } catch (e) {
+            // Failsafe rendering if segmenter momentarily faults
+            return null;
+        }
     };
 
     // 4. Main Compositing Canvas Render Loop
@@ -270,24 +269,36 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
             }
 
             // 2. Render Player 1 (Local Stream - Mirrored)
-            if (localVideoRef.current && localVideoRef.current.readyState >= 2) {
-                const localCutout = processHighQualityCutout(localVideoRef.current, localCutoutCanvasRef);
+            if (localVideoRef.current) {
+                const localCutout = processHighQualityCutout(localVideoRef.current, localCutoutCanvasRef, localMaskCanvasRef);
                 if (localCutout) {
                     ctx.save();
                     ctx.translate(canvas.width, 0);
                     ctx.scale(-1, 1);
                     ctx.drawImage(localCutout, 0, 0, canvas.width, canvas.height);
                     ctx.restore();
+                } else if (localVideoRef.current.readyState >= 2 && !isSegmenterReady) {
+                    // Fallback before AI loads
+                    ctx.save();
+                    ctx.translate(canvas.width, 0);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(localVideoRef.current, 0, 0, canvas.width, canvas.height);
+                    ctx.restore();
                 }
             }
 
-            // 3. Render Player 2 (Remote Stream - Overlapping)
-            if (remoteVideoRef.current && remoteVideoRef.current.readyState >= 2) {
-                const remoteCutout = processHighQualityCutout(remoteVideoRef.current, remoteCutoutCanvasRef);
+            // 3. Render Player 2 (Remote Stream - Overlapping Together)
+            if (remoteVideoRef.current) {
+                const remoteCutout = processHighQualityCutout(remoteVideoRef.current, remoteCutoutCanvasRef, remoteMaskCanvasRef);
                 if (remoteCutout) {
                     ctx.save();
                     ctx.drawImage(remoteCutout, 0, 0, canvas.width, canvas.height);
                     ctx.restore();
+                } else if (remoteVideoRef.current.readyState >= 2 && !isSegmenterReady) {
+                     // Fallback
+                     ctx.save();
+                     ctx.drawImage(remoteVideoRef.current, 0, 0, canvas.width, canvas.height);
+                     ctx.restore();
                 }
             }
 
@@ -301,7 +312,7 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         };
     }, [bgImageObj, isSegmenterReady]);
 
-    // 5. Synchronized Realtime Photostrip Handlers
+    // 5. Synchronized Realtime Photostrip Sequence (5 Seconds interval)
     useEffect(() => {
         const handleBgUpdate = (newUrl: string) => setSelectedBg(newUrl);
         const handleStripCleared = () => setCapturedPhotos([]);
@@ -316,7 +327,7 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
             const runCaptureCycle = () => {
                 if (photoCount >= 3) return;
 
-                let count = 3;
+                let count = 5; // Updated to exactly 5 seconds interval
                 setCountdown(count);
 
                 const timer = setInterval(() => {
@@ -334,7 +345,8 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
 
                         photoCount += 1;
                         if (photoCount < 3) {
-                            setTimeout(runCaptureCycle, 1000);
+                            // Give users a 500ms breather before showing the next countdown
+                            setTimeout(runCaptureCycle, 500);
                         }
                     }
                 }, 1000);
