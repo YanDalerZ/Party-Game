@@ -220,9 +220,10 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
             // Ultra-fast 32-bit pixel array manipulation
             const data32 = new Uint32Array(maskImageData.data.buffer);
             for (let i = 0; i < categoryMask.length; i++) {
-                // 0xFFFFFFFF = Fully opaque white (Person)
-                // 0x00000000 = Fully transparent (Background)
-                data32[i] = categoryMask[i] > 0 ? 0xFFFFFFFF : 0x00000000;
+                // INVERTED MASK LOGIC HERE
+                // 0x00000000 = Fully transparent (Removes the background)
+                // 0xFFFFFFFF = Fully opaque white (Keeps the person)
+                data32[i] = categoryMask[i] > 0 ? 0x00000000 : 0xFFFFFFFF;
             }
             maskCtx.putImageData(maskImageData, 0, 0);
 
