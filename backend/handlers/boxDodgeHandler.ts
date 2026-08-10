@@ -1,50 +1,48 @@
 import { Server, Socket } from "socket.io";
 import { Room } from "./types";
 
-interface BoxObstacle {
+interface WallObstacle {
     id: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
     z: number;
     speed: number;
+    shape: "rectangle" | "circle" | "diamond";
+    holeWidth: number;
+    holeHeight: number;
 }
 
-interface BoxDodgeGameState {
+interface WallDodgeGameState {
     status: "WAITING" | "COUNTDOWN" | "PLAYING" | "GAME_OVER";
     scores: Record<string, number>;
     lives: Record<string, number>;
-    boxes: BoxObstacle[];
+    walls: WallObstacle[];
     round: number;
 }
 
-const gameStates: Record<string, BoxDodgeGameState> = {};
+const gameStates: Record<string, WallDodgeGameState> = {};
 const hitCooldowns: Record<string, number> = {};
 
 export function registerBoxDodgeHandlers(io: Server, socket: Socket, rooms: Record<string, Room>) {
-    const spawnBoxes = (roomCode: string) => {
-        const boxes: BoxObstacle[] = [
+    const spawnWalls = (roomCode: string) => {
+        const shapes: ("rectangle" | "circle" | "diamond")[] = ["rectangle", "circle", "diamond"];
+        const walls: WallObstacle[] = [
             {
                 id: Math.random().toString(36).substring(7),
-                x: (Math.random() - 0.5) * 0.8,
-                y: (Math.random() - 0.5) * 0.6,
-                width: 0.25,
-                height: 0.25,
                 z: 1.0,
                 speed: 0.012,
+                shape: shapes[Math.floor(Math.random() * shapes.length)],
+                holeWidth: 0.35,
+                holeHeight: 0.4,
             },
             {
                 id: Math.random().toString(36).substring(7),
-                x: (Math.random() - 0.5) * 0.8,
-                y: (Math.random() - 0.5) * 0.6,
-                width: 0.22,
-                height: 0.22,
-                z: 0.6,
+                z: 0.55,
                 speed: 0.014,
+                shape: shapes[Math.floor(Math.random() * shapes.length)],
+                holeWidth: 0.38,
+                holeHeight: 0.42,
             }
         ];
-        return boxes;
+        return walls;
     };
 
     socket.on("dodge_start_game", (roomCode: string) => {
@@ -63,7 +61,7 @@ export function registerBoxDodgeHandlers(io: Server, socket: Socket, rooms: Reco
             status: "COUNTDOWN",
             scores: initialScores,
             lives: initialLives,
-            boxes: [],
+            walls: [],
             round: 1,
         };
 
@@ -82,28 +80,28 @@ export function registerBoxDodgeHandlers(io: Server, socket: Socket, rooms: Reco
 
                 if (gameStates[roomCode]) {
                     gameStates[roomCode].status = "PLAYING";
-                    gameStates[roomCode].boxes = spawnBoxes(roomCode);
+                    gameStates[roomCode].walls = spawnWalls(roomCode);
                     io.to(roomCode).emit("dodge_state_sync", gameStates[roomCode]);
                 }
             }
         }, 1000);
     });
 
-    socket.on("dodge_update_boxes", ({ roomCode, boxes }: { roomCode: string; boxes: BoxObstacle[] }) => {
+    socket.on("dodge_update_walls", ({ roomCode, walls }: { roomCode: string; walls: WallObstacle[] }) => {
         const gameState = gameStates[roomCode];
         if (gameState && gameState.status === "PLAYING") {
-            gameState.boxes = boxes;
+            gameState.walls = walls;
             io.to(roomCode).emit("dodge_state_sync", gameState);
         }
     });
 
-    socket.on("dodge_box_hit", ({ roomCode, playerId, boxId }: { roomCode: string; playerId: string; boxId: string }) => {
+    socket.on("dodge_wall_hit", ({ roomCode, playerId, wallId }: { roomCode: string; playerId: string; wallId: string }) => {
         const gameState = gameStates[roomCode];
         if (!gameState || gameState.status !== "PLAYING") return;
 
-        // Cooldown check to prevent multiple rapid deductions per hit
+        // Cooldown check to prevent multiple rapid deductions per wall hit
         const now = Date.now();
-        const cooldownKey = `${roomCode}_${playerId}_${boxId}`;
+        const cooldownKey = `${roomCode}_${playerId}_${wallId}`;
         if (hitCooldowns[cooldownKey] && now - hitCooldowns[cooldownKey] < 1500) {
             return;
         }
@@ -116,7 +114,7 @@ export function registerBoxDodgeHandlers(io: Server, socket: Socket, rooms: Reco
         const allDead = Object.values(gameState.lives).every((lives) => lives <= 0);
         if (allDead) {
             gameState.status = "GAME_OVER";
-            gameState.boxes = [];
+            gameState.walls = [];
         }
 
         io.to(roomCode).emit("dodge_state_sync", gameState);
