@@ -32,7 +32,6 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
     const mainCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const stripCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-    // Offscreen Canvas Cache for Smooth Segmentation Filtering
     const localCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const remoteCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const localMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -48,10 +47,10 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
     const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
     const [isConnected, setIsConnected] = useState<boolean>(false);
     const [isSegmenterReady, setIsSegmenterReady] = useState<boolean>(false);
-    const [showMobileStrip, setShowMobileStrip] = useState<boolean>(false);
 
     // 1. Initialize High-Quality MediaPipe Segmenter
     useEffect(() => {
+        let isMounted = true;
         async function loadSegmenter() {
             try {
                 const filesetResolver = await FilesetResolver.forVisionTasks(
@@ -66,13 +65,21 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
                     runningMode: "VIDEO",
                     outputCategoryMask: true,
                 });
-                segmenterRef.current = segmenter;
-                setIsSegmenterReady(true);
+                if (isMounted) {
+                    segmenterRef.current = segmenter;
+                    setIsSegmenterReady(true);
+                }
             } catch (err) {
                 console.error("Failed to initialize background segmenter:", err);
             }
         }
         loadSegmenter();
+        return () => {
+            isMounted = false;
+            if (segmenterRef.current) {
+                segmenterRef.current.close();
+            }
+        };
     }, []);
 
     // 2. Preload Shared Background Image
@@ -128,21 +135,42 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
 
                 const handleOffer = async ({ offer }: { offer: RTCSessionDescriptionInit }) => {
                     if (!pcRef.current) return;
-                    await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-                    const answer = await pcRef.current.createAnswer();
-                    await pcRef.current.setLocalDescription(answer);
-                    socket.emit("webrtc_answer", { roomCode: room.code, answer });
+                    try {
+                        if (pcRef.current.signalingState !== "stable") {
+                            await Promise.all([
+                                pcRef.current.setLocalDescription({ type: "rollback" }),
+                                pcRef.current.setRemoteDescription(new RTCSessionDescription(offer)),
+                            ]);
+                        } else {
+                            await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+                        }
+                        const answer = await pcRef.current.createAnswer();
+                        await pcRef.current.setLocalDescription(answer);
+                        socket.emit("webrtc_answer", { roomCode: room.code, answer });
+                    } catch (err) {
+                        console.error("Error handling offer:", err);
+                    }
                 };
 
                 const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
-                    if (pcRef.current) {
-                        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+                    if (!pcRef.current) return;
+                    try {
+                        if (pcRef.current.signalingState === "have-local-offer") {
+                            await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+                        }
+                    } catch (err) {
+                        console.error("Error handling answer:", err);
                     }
                 };
 
                 const handleCandidate = async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
-                    if (pcRef.current) {
-                        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                    if (!pcRef.current) return;
+                    try {
+                        if (pcRef.current.remoteDescription) {
+                            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                        }
+                    } catch (err) {
+                        console.error("Error handling ICE candidate:", err);
                     }
                 };
 
@@ -154,9 +182,13 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
 
                 socket.on("start_webrtc_offer", async () => {
                     if (!pcRef.current) return;
-                    const offer = await pcRef.current.createOffer();
-                    await pcRef.current.setLocalDescription(offer);
-                    socket.emit("webrtc_offer", { roomCode: room.code, offer });
+                    try {
+                        const offer = await pcRef.current.createOffer();
+                        await pcRef.current.setLocalDescription(offer);
+                        socket.emit("webrtc_offer", { roomCode: room.code, offer });
+                    } catch (err) {
+                        console.error("Error starting offer:", err);
+                    }
                 });
             } catch (err) {
                 console.error("Camera access error:", err);
@@ -180,7 +212,6 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         };
     }, [room.code]);
 
-    // High Quality Soft-Edge Cutout Processor (Optimized via 32-bit Buffer)
     const processHighQualityCutout = (
         video: HTMLVideoElement,
         cutoutCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
@@ -192,9 +223,9 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
             const result = segmenterRef.current.segmentForVideo(video, performance.now());
             if (!result || !result.categoryMask) return null;
 
-            // Dynamically match the actual camera resolution to prevent distortion
-            const maskWidth = result.categoryMask.width;
-            const maskHeight = result.categoryMask.height;
+            const categoryMaskObj = result.categoryMask;
+            const maskWidth = categoryMaskObj.width;
+            const maskHeight = categoryMaskObj.height;
 
             if (!cutoutCanvasRef.current) cutoutCanvasRef.current = document.createElement("canvas");
             if (!maskCanvasRef.current) maskCanvasRef.current = document.createElement("canvas");
@@ -212,41 +243,77 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
             const cutoutCtx = cutoutCanvas.getContext("2d", { willReadFrequently: true });
             const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
 
-            if (!cutoutCtx || !maskCtx) return null;
+            if (!cutoutCtx || !maskCtx) {
+                categoryMaskObj.close();
+                return null;
+            }
 
-            const categoryMask = result.categoryMask.getAsUint8Array();
+            const categoryMask = categoryMaskObj.getAsUint8Array();
             const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
-            
-            // Ultra-fast 32-bit pixel array manipulation
+
             const data32 = new Uint32Array(maskImageData.data.buffer);
             for (let i = 0; i < categoryMask.length; i++) {
-                // INVERTED MASK LOGIC HERE
-                // 0x00000000 = Fully transparent (Removes the background)
-                // 0xFFFFFFFF = Fully opaque white (Keeps the person)
-                data32[i] = categoryMask[i] > 0 ? 0x00000000 : 0xFFFFFFFF;
+                data32[i] = categoryMask[i] > 0 ? 0x00000000 : 0xffffffff;
             }
             maskCtx.putImageData(maskImageData, 0, 0);
 
+            categoryMaskObj.close();
+
             cutoutCtx.clearRect(0, 0, maskWidth, maskHeight);
-            
-            // Draw raw video frame
             cutoutCtx.drawImage(video, 0, 0, maskWidth, maskHeight);
-            
-            // Apply destination-in to cut out the person cleanly.
-            // A slight 2px blur creates a natural anti-aliased edge similar to Google Meet
+
             cutoutCtx.globalCompositeOperation = "destination-in";
             cutoutCtx.filter = "blur(2px)";
             cutoutCtx.drawImage(maskCanvas, 0, 0, maskWidth, maskHeight);
-            
-            // Reset for next frame
+
             cutoutCtx.filter = "none";
             cutoutCtx.globalCompositeOperation = "source-over";
 
             return cutoutCanvas;
         } catch (e) {
-            // Failsafe rendering if segmenter momentarily faults
             return null;
         }
+    };
+
+    const drawAspectCover = (
+        ctx: CanvasRenderingContext2D,
+        source: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
+        targetWidth: number,
+        targetHeight: number
+    ) => {
+        let srcWidth = 0;
+        let srcHeight = 0;
+
+        if (source instanceof HTMLVideoElement) {
+            srcWidth = source.videoWidth;
+            srcHeight = source.videoHeight;
+        } else if (source instanceof HTMLCanvasElement) {
+            srcWidth = source.width;
+            srcHeight = source.height;
+        } else if (source instanceof HTMLImageElement) {
+            srcWidth = source.naturalWidth || source.width;
+            srcHeight = source.naturalHeight || source.height;
+        }
+
+        if (!srcWidth || !srcHeight) return;
+
+        const srcAspect = srcWidth / srcHeight;
+        const targetAspect = targetWidth / targetHeight;
+
+        let drawWidth = targetWidth;
+        let drawHeight = targetHeight;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (srcAspect > targetAspect) {
+            drawWidth = targetHeight * srcAspect;
+            offsetX = (targetWidth - drawWidth) / 2;
+        } else {
+            drawHeight = targetWidth / srcAspect;
+            offsetY = (targetHeight - drawHeight) / 2;
+        }
+
+        ctx.drawImage(source, offsetX, offsetY, drawWidth, drawHeight);
     };
 
     // 4. Main Compositing Canvas Render Loop
@@ -261,46 +328,44 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Draw Background
             if (bgImageObj) {
-                ctx.drawImage(bgImageObj, 0, 0, canvas.width, canvas.height);
+                drawAspectCover(ctx, bgImageObj, canvas.width, canvas.height);
             } else {
-                ctx.fillStyle = "#0f172a";
+                ctx.fillStyle = "#f3e8ff";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
 
-            // 2. Render Player 1 (Local Stream - Mirrored)
             if (localVideoRef.current) {
-                const localCutout = processHighQualityCutout(localVideoRef.current, localCutoutCanvasRef, localMaskCanvasRef);
+                const localCutout = processHighQualityCutout(
+                    localVideoRef.current,
+                    localCutoutCanvasRef,
+                    localMaskCanvasRef
+                );
+                ctx.save();
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+
                 if (localCutout) {
-                    ctx.save();
-                    ctx.translate(canvas.width, 0);
-                    ctx.scale(-1, 1);
-                    ctx.drawImage(localCutout, 0, 0, canvas.width, canvas.height);
-                    ctx.restore();
-                } else if (localVideoRef.current.readyState >= 2 && !isSegmenterReady) {
-                    // Fallback before AI loads
-                    ctx.save();
-                    ctx.translate(canvas.width, 0);
-                    ctx.scale(-1, 1);
-                    ctx.drawImage(localVideoRef.current, 0, 0, canvas.width, canvas.height);
-                    ctx.restore();
+                    drawAspectCover(ctx, localCutout, canvas.width, canvas.height);
+                } else if (localVideoRef.current.readyState >= 2) {
+                    drawAspectCover(ctx, localVideoRef.current, canvas.width, canvas.height);
                 }
+                ctx.restore();
             }
 
-            // 3. Render Player 2 (Remote Stream - Overlapping Together)
             if (remoteVideoRef.current) {
-                const remoteCutout = processHighQualityCutout(remoteVideoRef.current, remoteCutoutCanvasRef, remoteMaskCanvasRef);
+                const remoteCutout = processHighQualityCutout(
+                    remoteVideoRef.current,
+                    remoteCutoutCanvasRef,
+                    remoteMaskCanvasRef
+                );
+                ctx.save();
                 if (remoteCutout) {
-                    ctx.save();
-                    ctx.drawImage(remoteCutout, 0, 0, canvas.width, canvas.height);
-                    ctx.restore();
-                } else if (remoteVideoRef.current.readyState >= 2 && !isSegmenterReady) {
-                     // Fallback
-                     ctx.save();
-                     ctx.drawImage(remoteVideoRef.current, 0, 0, canvas.width, canvas.height);
-                     ctx.restore();
+                    drawAspectCover(ctx, remoteCutout, canvas.width, canvas.height);
+                } else if (remoteVideoRef.current.readyState >= 2) {
+                    drawAspectCover(ctx, remoteVideoRef.current, canvas.width, canvas.height);
                 }
+                ctx.restore();
             }
 
             animationFrameId = requestAnimationFrame(renderFrame);
@@ -313,22 +378,50 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         };
     }, [bgImageObj, isSegmenterReady]);
 
-    // 5. Synchronized Realtime Photostrip Sequence (5 Seconds interval)
+    // Function to capture current canvas frame and add to photostrip
+    const captureCurrentCanvasToStrip = () => {
+        const canvas = mainCanvasRef.current;
+        if (!canvas) return;
+
+        const snapshotDataUrl = canvas.toDataURL("image/png");
+
+        setCapturedPhotos((prev) => {
+            if (prev.length >= 3) {
+                return [...prev.slice(1), snapshotDataUrl];
+            }
+            return [...prev, snapshotDataUrl];
+        });
+
+        socket.emit("photobooth_add_strip_frame", { roomCode: room.code, frameUrl: snapshotDataUrl });
+    };
+
+    // 5. Synchronized Realtime Photostrip Sequence & Socket Events
     useEffect(() => {
         const handleBgUpdate = (newUrl: string) => setSelectedBg(newUrl);
         const handleStripCleared = () => setCapturedPhotos([]);
         const handleStripFrameAdded = (frameUrl: string) => {
-            setCapturedPhotos((prev) => [...prev, frameUrl]);
+            setCapturedPhotos((prev) => {
+                if (prev.includes(frameUrl)) return prev;
+                if (prev.length >= 3) {
+                    return [...prev.slice(1), frameUrl];
+                }
+                return [...prev, frameUrl];
+            });
         };
 
         const handleSequenceStarted = () => {
             setCapturedPhotos([]);
+            socket.emit("photobooth_clear_strip", { roomCode: room.code });
+
             let photoCount = 0;
 
             const runCaptureCycle = () => {
-                if (photoCount >= 3) return;
+                if (photoCount >= 3) {
+                    setCountdown(null);
+                    return;
+                }
 
-                let count = 5; // Updated to exactly 5 seconds interval
+                let count = 5;
                 setCountdown(count);
 
                 const timer = setInterval(() => {
@@ -346,8 +439,7 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
 
                         photoCount += 1;
                         if (photoCount < 3) {
-                            // Give users a 500ms breather before showing the next countdown
-                            setTimeout(runCaptureCycle, 500);
+                            setTimeout(runCaptureCycle, 1000);
                         }
                     }
                 }, 1000);
@@ -369,51 +461,86 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
         };
     }, [room.code]);
 
-    // Generate Downloadable High-Res Photo Strip
+    // Render Photostrip to Export Canvas Whenever Captured Photos Update
     useEffect(() => {
-        if (capturedPhotos.length === 0 || !stripCanvasRef.current) return;
+        if (!stripCanvasRef.current) return;
 
         const canvas = stripCanvasRef.current;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
-        const padding = 20;
+        const maxSlots = 3;
+        const padding = 28;
         const photoWidth = 360;
         const photoHeight = 202;
-        const headerHeight = 60;
-        const footerHeight = 40;
+        const headerHeight = 30;
+        const footerHeight = 110;
 
         canvas.width = photoWidth + padding * 2;
-        canvas.height =
-            headerHeight +
-            footerHeight +
-            capturedPhotos.length * photoHeight +
-            (capturedPhotos.length + 1) * padding;
+        canvas.height = headerHeight + footerHeight + maxSlots * photoHeight + (maxSlots + 1) * padding;
 
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const renderStrip = (loadedImages: (HTMLImageElement | null)[]) => {
+            ctx.fillStyle = "#fdf4ff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.fillStyle = "#0f172a";
-        ctx.font = "bold 20px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("CO-PRESENCE PHOTO BOOTH 📸", canvas.width / 2, 40);
+            for (let i = 0; i < maxSlots; i++) {
+                const yPos = headerHeight + padding + i * (photoHeight + padding);
+
+                ctx.strokeStyle = "#f472b6";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(padding - 3, yPos - 3, photoWidth + 6, photoHeight + 6);
+
+                const img = loadedImages[i];
+                if (img) {
+                    ctx.drawImage(img, padding, yPos, photoWidth, photoHeight);
+                } else {
+                    ctx.fillStyle = "#fae8ff";
+                    ctx.fillRect(padding, yPos, photoWidth, photoHeight);
+
+                    ctx.fillStyle = "#c084fc";
+                    ctx.font = "bold 14px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(`✨ SNAP #${i + 1} ✨`, canvas.width / 2, yPos + photoHeight / 2);
+                }
+            }
+
+            const footerY = canvas.height - footerHeight + 15;
+            ctx.fillStyle = "#a855f7";
+            ctx.font = "bold 22px cursive, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("✨ Co-Presence Photo Booth ✨", canvas.width / 2, footerY + 25);
+
+            ctx.fillStyle = "#ec4899";
+            ctx.font = "12px sans-serif";
+            ctx.fillText(
+                `${new Date().toLocaleDateString()} • ROOM: ${room.code}`,
+                canvas.width / 2,
+                footerY + 52
+            );
+        };
+
+        if (capturedPhotos.length === 0) {
+            renderStrip([]);
+            return;
+        }
+
+        const loadedImages: (HTMLImageElement | null)[] = new Array(capturedPhotos.length).fill(null);
+        let loadedCount = 0;
 
         capturedPhotos.forEach((url, idx) => {
             const img = new Image();
-            img.crossOrigin = "anonymous";
             img.src = url;
             img.onload = () => {
-                const yPos = headerHeight + padding + idx * (photoHeight + padding);
-                ctx.drawImage(img, padding, yPos, photoWidth, photoHeight);
-
-                if (idx === capturedPhotos.length - 1) {
-                    ctx.fillStyle = "#64748b";
-                    ctx.font = "12px sans-serif";
-                    ctx.fillText(
-                        new Date().toLocaleDateString() + " • Room: " + room.code,
-                        canvas.width / 2,
-                        canvas.height - 15
-                    );
+                loadedImages[idx] = img;
+                loadedCount++;
+                if (loadedCount === capturedPhotos.length) {
+                    renderStrip(loadedImages);
+                }
+            };
+            img.onerror = () => {
+                loadedCount++;
+                if (loadedCount === capturedPhotos.length) {
+                    renderStrip(loadedImages);
                 }
             };
         });
@@ -436,81 +563,80 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
     };
 
     return (
-        <div className="flex flex-col min-h-screen w-screen bg-slate-900 text-white overflow-x-hidden">
-            {/* Hidden Feed Elements */}
+        <div className="flex flex-col h-screen w-screen bg-gradient-to-br from-pink-100 via-purple-100 to-pink-200 text-slate-800 overflow-hidden font-sans">
             <video ref={localVideoRef} autoPlay playsInline muted className="hidden" />
             <video ref={remoteVideoRef} autoPlay playsInline className="hidden" />
 
-            {/* Header Control Panel */}
-            <header className="p-3 sm:p-4 bg-slate-800 border-b border-slate-700 flex flex-wrap justify-between items-center gap-2 shrink-0 z-20 shadow-md">
+            {/* Header */}
+            <header className="p-2 sm:p-4 bg-white/80 backdrop-blur-md border-b border-pink-200 flex justify-between items-center shrink-0 z-20 shadow-sm">
                 <div className="flex items-center gap-2 sm:gap-3">
-                    <span className="text-xl sm:text-2xl">📸</span>
+                    <span className="text-xl sm:text-2xl animate-bounce">📸</span>
                     <div>
-                        <h1 className="text-sm sm:text-lg font-bold text-slate-100">Co-Presence Photo Booth</h1>
-                        <p className="text-[10px] sm:text-xs text-slate-400">
+                        <h1 className="text-sm sm:text-lg font-extrabold bg-gradient-to-r from-pink-500 to-purple-600 bg-clip-text text-transparent">
+                            Cute Photo Booth
+                        </h1>
+                        <p className="text-[10px] sm:text-xs text-purple-500 font-medium">
                             {!isSegmenterReady
                                 ? "Loading AI Segmentation..."
                                 : isConnected
-                                ? "Connected & Cutouts Active"
-                                : "Connecting Stream..."}
+                                    ? "Connected & Cutouts Active"
+                                    : "Connecting Stream..."}
                         </p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                     <button
-                        onClick={() => setShowMobileStrip(!showMobileStrip)}
-                        className="lg:hidden bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs"
+                        onClick={captureCurrentCanvasToStrip}
+                        className="bg-pink-500 hover:bg-pink-600 text-white font-bold px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-2xl transition shadow-md shadow-pink-300 text-xs sm:text-sm active:scale-95"
                     >
-                        🎞️ Strip ({capturedPhotos.length})
+                        📷 Snap
                     </button>
                     <button
                         onClick={startPhotoSequence}
                         disabled={countdown !== null}
-                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl transition shadow-lg shadow-emerald-600/30 text-xs sm:text-sm"
+                        className="bg-purple-500 hover:bg-purple-600 disabled:opacity-50 text-white font-bold px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-2xl transition shadow-md shadow-purple-300 text-xs sm:text-sm active:scale-95"
                     >
-                        📸 Take 3 Snaps
+                        📸 Auto 3
                     </button>
                     <button
                         onClick={() => socket.emit("return_lobby", room.code)}
-                        className="bg-slate-700 hover:bg-slate-600 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold text-slate-200 transition"
+                        className="bg-pink-100 hover:bg-pink-200 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-2xl text-xs font-bold text-pink-600 transition"
                     >
                         Exit
                     </button>
                 </div>
             </header>
 
-            {/* Responsive Main Layout Stage */}
-            <main className="flex-1 flex flex-col lg:flex-row p-2 sm:p-4 gap-3 sm:gap-4 overflow-y-auto items-center justify-center">
-                {/* Single Overlapping Canvas Display */}
-                <div className="flex-1 flex flex-col items-center justify-center w-full max-w-5xl">
-                    <div className="relative w-full aspect-video bg-black rounded-xl sm:rounded-2xl border border-slate-700 overflow-hidden shadow-2xl flex items-center justify-center">
+            {/* Main Area */}
+            <main className="flex-1 flex flex-col md:flex-row p-2 sm:p-4 gap-3 sm:gap-4 overflow-hidden min-h-0">
+                {/* Canvas View Area */}
+                <div className="flex-1 flex flex-col items-center justify-center min-h-0">
+                    <div className="relative w-full h-full max-h-[50vh] md:max-h-[75vh] aspect-video bg-white rounded-3xl border-4 border-pink-300 overflow-hidden shadow-xl flex items-center justify-center">
                         <canvas ref={mainCanvasRef} width={1280} height={720} className="w-full h-full object-cover" />
 
-                        {/* Synced Countdown Overlay */}
                         {countdown !== null && (
-                            <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-20">
-                                <span className="text-7xl sm:text-9xl font-black text-amber-400 animate-ping">
+                            <div className="absolute inset-0 bg-purple-900/30 backdrop-blur-xs flex items-center justify-center z-20">
+                                <span className="text-7xl sm:text-9xl font-black text-pink-400 drop-shadow-lg animate-ping">
                                     {countdown}
                                 </span>
                             </div>
                         )}
                     </div>
 
-                    {/* Shared Background Selection Strip */}
-                    <div className="mt-3 w-full overflow-x-auto flex items-center gap-2 bg-slate-800/90 p-2 rounded-xl border border-slate-700 backdrop-blur-md">
-                        <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider px-2 shrink-0">
-                            Backgrounds:
+                    {/* Background Selector */}
+                    <div className="mt-2 sm:mt-3 w-full overflow-x-auto flex items-center gap-2 bg-white/80 p-2 rounded-2xl border border-pink-200 backdrop-blur-md shrink-0 shadow-sm">
+                        <span className="text-[10px] sm:text-xs font-bold text-purple-600 uppercase tracking-wider px-2 shrink-0">
+                            Theme:
                         </span>
                         {PRESET_BACKGROUNDS.map((bg) => (
                             <button
                                 key={bg.label}
                                 onClick={() => changeBackground(bg.url)}
-                                className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold shrink-0 transition ${
-                                    selectedBg === bg.url
-                                        ? "bg-indigo-600 text-white ring-2 ring-indigo-400"
-                                        : "bg-slate-700 hover:bg-slate-600 text-slate-300"
-                                }`}
+                                className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-bold shrink-0 transition ${selectedBg === bg.url
+                                    ? "bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-sm"
+                                    : "bg-purple-50 hover:bg-purple-100 text-purple-600"
+                                    }`}
                             >
                                 {bg.label}
                             </button>
@@ -518,37 +644,47 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
                     </div>
                 </div>
 
-                {/* Real-Time Photostrip Sidebar (Desktop Dock / Mobile Drawer) */}
-                <aside
-                    className={`w-full lg:w-80 bg-slate-800 border border-slate-700 rounded-2xl p-3 sm:p-4 flex flex-col max-h-[500px] lg:max-h-[720px] shadow-2xl shrink-0 transition-all ${
-                        showMobileStrip ? "block" : "hidden lg:flex"
-                    }`}
-                >
-                    <h2 className="text-xs sm:text-sm font-bold text-slate-200 uppercase tracking-wider mb-2 flex items-center justify-between">
-                        <span>🎞️ Live Photo Strip</span>
-                        <span className="text-xs text-indigo-400">{capturedPhotos.length}/3</span>
+                {/* Sidebar Photostrip (Vertical on desktop, Horizontal tray on mobile) */}
+                <aside className="w-full md:w-80 bg-white/90 border-2 border-pink-200 rounded-3xl p-3 sm:p-4 flex flex-col shrink-0 shadow-xl h-auto md:h-full min-h-0">
+                    <h2 className="text-xs sm:text-sm font-extrabold text-purple-600 uppercase tracking-wider mb-2 flex items-center justify-between shrink-0">
+                        <span>🎀 Photo Strip</span>
+                        <span className="text-xs text-pink-500 font-mono font-bold">{capturedPhotos.length}/3</span>
                     </h2>
 
-                    <div className="flex-1 bg-slate-900 rounded-xl p-2.5 border border-slate-700 overflow-y-auto flex flex-col items-center gap-2.5 shadow-inner min-h-[180px]">
-                        {capturedPhotos.length === 0 ? (
-                            <div className="text-center text-slate-500 my-auto text-xs space-y-1 p-4">
-                                <p className="text-xl sm:text-2xl">🎞️</p>
-                                <p>No photos snapped yet.</p>
-                                <p className="text-[10px] text-slate-600">Click 'Take 3 Snaps' above to start sequence!</p>
-                            </div>
-                        ) : (
-                            capturedPhotos.map((photo, i) => (
+                    <div className="flex-1 bg-pink-50/50 rounded-2xl p-2 sm:p-3 border-2 border-pink-200 overflow-x-auto md:overflow-y-auto flex flex-row md:flex-col items-center gap-2 sm:gap-3 shadow-inner min-h-0">
+                        {[0, 1, 2, 3].map((idx) => {
+                            const photo = capturedPhotos[idx];
+                            return (
                                 <div
-                                    key={i}
-                                    className="relative w-full aspect-video rounded-lg overflow-hidden border border-slate-700 shadow-md shrink-0"
+                                    key={idx}
+                                    className="relative w-28 sm:w-36 md:w-full aspect-video rounded-xl overflow-hidden border-2 border-pink-300 bg-white shadow-sm shrink-0 flex items-center justify-center"
                                 >
-                                    <img src={photo} alt={`Snap ${i + 1}`} className="w-full h-full object-cover" />
-                                    <span className="absolute bottom-1 right-1 bg-black/60 text-[9px] px-1.5 py-0.5 rounded text-white font-mono">
-                                        #{i + 1}
-                                    </span>
+                                    {photo ? (
+                                        <>
+                                            <img src={photo} alt={`Snap ${idx + 1}`} className="w-full h-full object-cover" />
+                                            <span className="absolute bottom-1 right-1 bg-pink-500/80 text-white text-[8px] sm:text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+                                                #{idx + 1}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center text-pink-300 space-y-1">
+                                            <span className="text-[10px] sm:text-xs font-bold tracking-wider">
+                                                ✨ SNAP #{idx + 1} ✨
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
-                            ))
-                        )}
+                            );
+                        })}
+
+                        <div className="hidden md:block mt-auto pt-3 text-center w-full border-t border-pink-200 shrink-0">
+                            <p className="font-bold text-xs text-purple-600 tracking-wide">
+                                ✨ PHOTO BOOTH ✨
+                            </p>
+                            <p className="text-[10px] text-pink-400 mt-0.5">
+                                {new Date().toLocaleDateString()} • Room: {room.code}
+                            </p>
+                        </div>
                     </div>
 
                     <canvas ref={stripCanvasRef} className="hidden" />
@@ -556,9 +692,9 @@ export default function PhotoBooth({ room, myId: _myId }: Props) {
                     <button
                         onClick={downloadStrip}
                         disabled={capturedPhotos.length === 0}
-                        className="mt-2.5 w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold py-2 rounded-xl transition text-xs shadow-lg shadow-indigo-600/30"
+                        className="mt-2 sm:mt-3 w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 disabled:opacity-40 text-white font-extrabold py-2 rounded-2xl transition text-xs shadow-md shadow-pink-200 shrink-0 active:scale-95"
                     >
-                        ⬇️ Download Photostrip
+                        💖 Download Strip
                     </button>
                 </aside>
             </main>

@@ -15,6 +15,7 @@ import { registerWordChainHandlers } from "./handlers/wordChainHandler";
 import { registerBombDefusalHandlers } from "./handlers/bombDefusalHandler";
 import { registerDetectiveCaricatureHandlers } from "./handlers/detectiveCaricatureHandler";
 import { registerPhotoBoothHandlers } from "./handlers/photoboothHandler";
+import { registerBoxDodgeHandlers } from "./handlers/boxDodgeHandler";
 
 const app = express();
 app.use(cors());
@@ -90,6 +91,7 @@ io.on("connection", (socket) => {
     registerBombDefusalHandlers(io, socket, rooms);
     registerDetectiveCaricatureHandlers(io, socket, rooms);
     registerPhotoBoothHandlers(io, socket);
+    registerBoxDodgeHandlers(io, socket, rooms);
 });
 
 // Wildcard fallback to serve index.html for client-side routing
